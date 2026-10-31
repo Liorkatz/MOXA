@@ -1,0 +1,52 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ui version="4.0">
+ <class>log</class>
+ <widget class="QWidget" name="log">
+  <property name="windowTitle">
+   <string>LOG</string>
+  </property>
+  <layout class="QVBoxLayout" name="logLayout">
+   <item>
+    <widget class="QLabel" name="logTitle">
+     <property name="text">
+      <string>Event Log</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="logActions">
+     <item>
+      <widget class="QLineEdit" name="filterInput">
+       <property name="placeholderText">
+        <string>Filter log messages…</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="clearLogButton">
+       <property name="text">
+        <string>Clear log</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="exportLogButton">
+       <property name="text">
+        <string>Export log…</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QPlainTextEdit" name="logOutput">
+     <property name="readOnly">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

@@ -1,0 +1,145 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ui version="4.0">
+ <class>add_moxa</class>
+ <widget class="QWidget" name="add_moxa">
+  <property name="windowTitle">
+   <string>Connection Settings</string>
+  </property>
+  <layout class="QVBoxLayout" name="connectionsLayout">
+   <item>
+    <layout class="QHBoxLayout" name="connectionTitleBar">
+     <item>
+      <widget class="QLabel" name="connectionsTitle">
+       <property name="text">
+        <string>Settings</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="settingsButton">
+       <property name="text">
+        <string>Settings</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="connectionsHelp">
+     <property name="text">
+      <string>Configure up to five ioLogik E1214 units. Changes are kept for this session.</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QGridLayout" name="connectionForm">
+     <item row="5" column="0"><widget class="QLabel" name="passwordInputLabel"><property name="text"><string>Password (optional)</string></property></widget></item>
+     <item row="5" column="1"><widget class="QLineEdit" name="passwordInput"><property name="echoMode"><enum>QLineEdit::Password</enum></property><property name="placeholderText"><string>Only if required by the device</string></property></widget></item>
+     <item row="0" column="0" colspan="1">
+      <widget class="QLabel" name="unitSelectorLabel">
+       <property name="text">
+        <string>Unit</string>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1" colspan="1">
+      <widget class="QComboBox" name="unitSelector" />
+     </item>
+     <item row="1" column="0" colspan="1">
+      <widget class="QLabel" name="nameInputLabel">
+       <property name="text">
+        <string>Device name</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1" colspan="1">
+      <widget class="QLineEdit" name="nameInput" />
+     </item>
+     <item row="2" column="0" colspan="1">
+      <widget class="QLabel" name="ipInputLabel">
+       <property name="text">
+        <string>IP address</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="1" colspan="1">
+      <widget class="QLineEdit" name="ipInput" />
+     </item>
+     <item row="3" column="0" colspan="1">
+      <widget class="QLabel" name="portInputLabel">
+       <property name="text">
+        <string>Port</string>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="1" colspan="1">
+      <widget class="QSpinBox" name="portInput">
+       <property name="maximum">
+        <number>65535</number>
+       </property>
+       <property name="value">
+        <number>502</number>
+       </property>
+      </widget>
+     </item>
+     <item row="4" column="0" colspan="1">
+      <widget class="QLabel" name="timeoutInputLabel">
+       <property name="text">
+        <string>Connection timeout (ms)</string>
+       </property>
+      </widget>
+     </item>
+     <item row="4" column="1" colspan="1">
+      <widget class="QSpinBox" name="timeoutInput">
+       <property name="maximum">
+        <number>60000</number>
+       </property>
+       <property name="value">
+        <number>2000</number>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="connectionActions">
+     <item>
+      <widget class="QPushButton" name="newUnitButton">
+       <property name="text">
+        <string>New unit</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="saveConnectionButton">
+       <property name="text">
+        <string>Save unit</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="testConnectionButton">
+       <property name="text">
+        <string>Test connection (simulated)</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="connectionMessage">
+     <property name="text">
+      <string>No physical device connection is made.</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QWidget" name="manageContainer">
+     <layout class="QVBoxLayout" name="manageContainerLayout" />
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

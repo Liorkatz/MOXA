@@ -1,0 +1,17 @@
+# Local environment and generated files
+.venv/
+__pycache__/
+*.py[cod]
+archive/
+*.zip
+*.log
+
+# Configuration and transfer package are included in the private repository
+# at the owner's explicit request. They may contain plaintext passwords.
+*.tmp
+
+# The owner requested the MOXA vendor binary in this private repository.
+
+# Editors
+.vscode/
+.idea/

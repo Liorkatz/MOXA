@@ -1,0 +1,957 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>device_panel</class>
+ <widget class="QWidget" name="device_panel">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1209</width>
+    <height>460</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>800</width>
+    <height>460</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>Device controls</string>
+  </property>
+  <layout class="QVBoxLayout" name="deviceLayout">
+   <item>
+    <layout class="QHBoxLayout" name="deviceBar">
+     <item>
+      <widget class="QLabel" name="deviceName">
+       <property name="text">
+        <string>MOXA 1</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="ipCaption">
+       <property name="text">
+        <string>IP Address:</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="ipAddress">
+       <property name="text">
+        <string>169.254.10.81</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="connectionStatus">
+       <property name="text">
+        <string>● Simulated connected</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="controlColumns">
+     <item>
+      <widget class="QGroupBox" name="manualGroup">
+       <property name="title">
+        <string/>
+       </property>
+       <layout class="QGridLayout" name="manualGrid">
+        <item row="1" column="1">
+         <widget class="QFrame" name="operationFrame1">
+          <property name="frameShape">
+           <enum>QFrame::Shape::StyledPanel</enum>
+          </property>
+          <layout class="QGridLayout" name="manualColumn1">
+           <item row="0" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QLabel" name="header1">
+             <property name="text">
+              <string>Continuous</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuous1">
+             <property name="text">
+              <string>1</string>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuous2">
+             <property name="text">
+              <string>2</string>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuous3">
+             <property name="text">
+              <string>3</string>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuous4">
+             <property name="text">
+              <string>4</string>
+             </property>
+            </widget>
+           </item>
+           <item row="5" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuous5">
+             <property name="text">
+              <string>5</string>
+             </property>
+            </widget>
+           </item>
+           <item row="6" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuous6">
+             <property name="text">
+              <string>6</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item row="1" column="2">
+         <widget class="QFrame" name="operationFrame2">
+          <property name="frameShape">
+           <enum>QFrame::Shape::StyledPanel</enum>
+          </property>
+          <layout class="QGridLayout" name="manualColumn2">
+           <item row="0" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QLabel" name="header2">
+             <property name="text">
+              <string>Momentary</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QPushButton" name="pulse1">
+             <property name="text">
+              <string>1</string>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QPushButton" name="pulse2">
+             <property name="text">
+              <string>2</string>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QPushButton" name="pulse3">
+             <property name="text">
+              <string>3</string>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QPushButton" name="pulse4">
+             <property name="text">
+              <string>4</string>
+             </property>
+            </widget>
+           </item>
+           <item row="5" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QPushButton" name="pulse5">
+             <property name="text">
+              <string>5</string>
+             </property>
+            </widget>
+           </item>
+           <item row="6" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QPushButton" name="pulse6">
+             <property name="text">
+              <string>6</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item row="1" column="0">
+         <widget class="QFrame" name="operationFrame0">
+          <property name="maximumSize">
+           <size>
+            <width>180</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="frameShape">
+           <enum>QFrame::Shape::StyledPanel</enum>
+          </property>
+          <layout class="QGridLayout" name="manualColumn0">
+           <item row="0" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QLabel" name="header0">
+             <property name="text">
+              <string>Channel Name</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="0">
+            <widget class="QLineEdit" name="channelName1">
+             <property name="maximumSize">
+              <size>
+               <width>150</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Channel1</string>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="0">
+            <widget class="QLineEdit" name="channelName2">
+             <property name="maximumSize">
+              <size>
+               <width>150</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Channel2</string>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="0">
+            <widget class="QLineEdit" name="channelName3">
+             <property name="maximumSize">
+              <size>
+               <width>150</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Channel3</string>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="0">
+            <widget class="QLineEdit" name="channelName4">
+             <property name="maximumSize">
+              <size>
+               <width>150</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Channel4</string>
+             </property>
+            </widget>
+           </item>
+           <item row="5" column="0">
+            <widget class="QLineEdit" name="channelName5">
+             <property name="maximumSize">
+              <size>
+               <width>150</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Channel5</string>
+             </property>
+            </widget>
+           </item>
+           <item row="6" column="0">
+            <widget class="QLineEdit" name="channelName6">
+             <property name="maximumSize">
+              <size>
+               <width>150</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Channel6</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item row="0" column="3" colspan="2" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+         <widget class="QLabel" name="multiSelectionTitle">
+          <property name="text">
+           <string>Multi Selection</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="3">
+         <widget class="QFrame" name="operationFrame3">
+          <property name="frameShape">
+           <enum>QFrame::Shape::StyledPanel</enum>
+          </property>
+          <layout class="QGridLayout" name="manualColumn3">
+           <item row="0" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QPushButton" name="turnOnButton">
+             <property name="text">
+              <string>Turn On</string>
+             </property>
+             <property name="checkable">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuousSelect1">
+             <property name="text">
+              <string>1</string>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuousSelect2">
+             <property name="text">
+              <string>2</string>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuousSelect3">
+             <property name="text">
+              <string>3</string>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuousSelect4">
+             <property name="text">
+              <string>4</string>
+             </property>
+            </widget>
+           </item>
+           <item row="5" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuousSelect5">
+             <property name="text">
+              <string>5</string>
+             </property>
+            </widget>
+           </item>
+           <item row="6" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuousSelect6">
+             <property name="text">
+              <string>6</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item row="1" column="4">
+         <widget class="QFrame" name="operationFrame4">
+          <property name="frameShape">
+           <enum>QFrame::Shape::StyledPanel</enum>
+          </property>
+          <layout class="QGridLayout" name="manualColumn4">
+           <item row="0" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QPushButton" name="momentaryButton">
+             <property name="text">
+              <string>Momentary</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="momentarySelect1">
+             <property name="text">
+              <string>1</string>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="momentarySelect2">
+             <property name="text">
+              <string>2</string>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="momentarySelect3">
+             <property name="text">
+              <string>3</string>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="momentarySelect4">
+             <property name="text">
+              <string>4</string>
+             </property>
+            </widget>
+           </item>
+           <item row="5" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="momentarySelect5">
+             <property name="text">
+              <string>5</string>
+             </property>
+            </widget>
+           </item>
+           <item row="6" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="momentarySelect6">
+             <property name="text">
+              <string>6</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QGroupBox" name="automationGroup">
+       <property name="title">
+        <string>Automation Configuration</string>
+       </property>
+       <layout class="QGridLayout" name="automationGrid">
+        <item row="0" column="0">
+         <widget class="QLabel" name="autoHeader0">
+          <property name="text">
+           <string>Active
+Automation</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="QLabel" name="autoHeader1">
+          <property name="text">
+           <string>First Delay
+(ms)</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="2">
+         <widget class="QLabel" name="autoHeader2">
+          <property name="text">
+           <string>Pulse
+(ms)</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="3">
+         <widget class="QLabel" name="autoHeader3">
+          <property name="text">
+           <string>Repeat</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="4">
+         <widget class="QLabel" name="autoHeader4">
+          <property name="text">
+           <string>Delay Between
+(ms)</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="5">
+         <widget class="QLabel" name="autoHeader5">
+          <property name="text">
+           <string>Digital In
+Trigger</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+         <widget class="QCheckBox" name="active1">
+          <property name="text">
+           <string>1</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="QSpinBox" name="firstDelay1">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>0</number>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="2">
+         <widget class="QSpinBox" name="pulseTime1">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="3">
+         <widget class="QSpinBox" name="repeat1">
+          <property name="maximum">
+           <number>1000</number>
+          </property>
+          <property name="value">
+           <number>3</number>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="4">
+         <widget class="QSpinBox" name="between1">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="5">
+         <widget class="QComboBox" name="trigger1">
+          <item>
+           <property name="text">
+            <string>None</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 1</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 2</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 3</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 4</string>
+           </property>
+          </item>
+         </widget>
+        </item>
+        <item row="2" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+         <widget class="QCheckBox" name="active2">
+          <property name="text">
+           <string>2</string>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="1">
+         <widget class="QSpinBox" name="firstDelay2">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>500</number>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="2">
+         <widget class="QSpinBox" name="pulseTime2">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="3">
+         <widget class="QSpinBox" name="repeat2">
+          <property name="maximum">
+           <number>1000</number>
+          </property>
+          <property name="value">
+           <number>3</number>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="4">
+         <widget class="QSpinBox" name="between2">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="5">
+         <widget class="QComboBox" name="trigger2">
+          <item>
+           <property name="text">
+            <string>None</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 1</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 2</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 3</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 4</string>
+           </property>
+          </item>
+         </widget>
+        </item>
+        <item row="3" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+         <widget class="QCheckBox" name="active3">
+          <property name="text">
+           <string>3</string>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="1">
+         <widget class="QSpinBox" name="firstDelay3">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="2">
+         <widget class="QSpinBox" name="pulseTime3">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="3">
+         <widget class="QSpinBox" name="repeat3">
+          <property name="maximum">
+           <number>1000</number>
+          </property>
+          <property name="value">
+           <number>3</number>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="4">
+         <widget class="QSpinBox" name="between3">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="5">
+         <widget class="QComboBox" name="trigger3">
+          <item>
+           <property name="text">
+            <string>None</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 1</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 2</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 3</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 4</string>
+           </property>
+          </item>
+         </widget>
+        </item>
+        <item row="4" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+         <widget class="QCheckBox" name="active4">
+          <property name="text">
+           <string>4</string>
+          </property>
+         </widget>
+        </item>
+        <item row="4" column="1">
+         <widget class="QSpinBox" name="firstDelay4">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1500</number>
+          </property>
+         </widget>
+        </item>
+        <item row="4" column="2">
+         <widget class="QSpinBox" name="pulseTime4">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="4" column="3">
+         <widget class="QSpinBox" name="repeat4">
+          <property name="maximum">
+           <number>1000</number>
+          </property>
+          <property name="value">
+           <number>3</number>
+          </property>
+         </widget>
+        </item>
+        <item row="4" column="4">
+         <widget class="QSpinBox" name="between4">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="4" column="5">
+         <widget class="QComboBox" name="trigger4">
+          <item>
+           <property name="text">
+            <string>None</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 1</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 2</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 3</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 4</string>
+           </property>
+          </item>
+         </widget>
+        </item>
+        <item row="5" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+         <widget class="QCheckBox" name="active5">
+          <property name="text">
+           <string>5</string>
+          </property>
+         </widget>
+        </item>
+        <item row="5" column="1">
+         <widget class="QSpinBox" name="firstDelay5">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>2000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="5" column="2">
+         <widget class="QSpinBox" name="pulseTime5">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="5" column="3">
+         <widget class="QSpinBox" name="repeat5">
+          <property name="maximum">
+           <number>1000</number>
+          </property>
+          <property name="value">
+           <number>3</number>
+          </property>
+         </widget>
+        </item>
+        <item row="5" column="4">
+         <widget class="QSpinBox" name="between5">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="5" column="5">
+         <widget class="QComboBox" name="trigger5">
+          <item>
+           <property name="text">
+            <string>None</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 1</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 2</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 3</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 4</string>
+           </property>
+          </item>
+         </widget>
+        </item>
+        <item row="6" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+         <widget class="QCheckBox" name="active6">
+          <property name="text">
+           <string>6</string>
+          </property>
+         </widget>
+        </item>
+        <item row="6" column="1">
+         <widget class="QSpinBox" name="firstDelay6">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>2500</number>
+          </property>
+         </widget>
+        </item>
+        <item row="6" column="2">
+         <widget class="QSpinBox" name="pulseTime6">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="6" column="3">
+         <widget class="QSpinBox" name="repeat6">
+          <property name="maximum">
+           <number>1000</number>
+          </property>
+          <property name="value">
+           <number>3</number>
+          </property>
+         </widget>
+        </item>
+        <item row="6" column="4">
+         <widget class="QSpinBox" name="between6">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="6" column="5">
+         <widget class="QComboBox" name="trigger6">
+          <item>
+           <property name="text">
+            <string>None</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 1</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 2</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 3</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 4</string>
+           </property>
+          </item>
+         </widget>
+        </item>
+        <item row="7" column="0" colspan="2">
+         <widget class="QPushButton" name="runSelectedButton">
+          <property name="text">
+           <string>Run Selected</string>
+          </property>
+         </widget>
+        </item>
+        <item row="7" column="2">
+         <widget class="QPushButton" name="stopButton">
+          <property name="text">
+           <string>Stop</string>
+          </property>
+         </widget>
+        </item>
+        <item row="7" column="3" colspan="3">
+         <widget class="QPushButton" name="triggerButton">
+          <property name="text">
+           <string>Simulate D/I</string>
+          </property>
+         </widget>
+        </item>
+        <item row="8" column="0" colspan="6">
+         <widget class="QLabel" name="automationStatus">
+          <property name="text">
+           <string>Ready · Repeat is the number of pulses.</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

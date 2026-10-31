@@ -1,0 +1,86 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ui version="4.0">
+ <class>manage_moxa</class>
+ <widget class="QWidget" name="manage_moxa">
+  <property name="windowTitle">
+   <string>Manage Moxa</string>
+  </property>
+  <layout class="QVBoxLayout" name="manageLayout">
+   <item>
+    <widget class="QLabel" name="manageTitle">
+     <property name="text">
+      <string>Configured units</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="manageHelp">
+     <property name="text">
+      <string>Up to 5 devices · 6 relay channels per unit · Select a row to manage its connection.</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QTableWidget" name="deviceTable">
+     <property name="columnCount">
+      <number>4</number>
+     </property>
+     <column>
+      <property name="text">
+       <string>Device name</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>IP address</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>Channels</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>Status</string>
+      </property>
+     </column>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="manageActions">
+     <item>
+      <widget class="QPushButton" name="editDeviceButton">
+       <property name="text">
+        <string>Edit selected unit</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="removeDeviceButton">
+       <property name="text">
+        <string>Remove selected</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="toggleDeviceButton">
+       <property name="text">
+        <string>Connect / Disconnect (simulated)</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="deviceHint">
+     <property name="text">
+      <string>All connection operations are simulated.</string>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

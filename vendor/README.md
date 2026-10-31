@@ -1,0 +1,1 @@
+The official MOXA MXIO v2.12 x64 DLL has been extracted here from the downloaded vendor archive. Archive SHA-512 was verified against MOXA's published checksum. It loads and initializes in the project's 64-bit Python. Function signatures have been checked against mxio_sdk/include/c/MXIO.h. No physical I/O device was contacted during these checks.

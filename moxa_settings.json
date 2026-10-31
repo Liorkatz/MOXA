@@ -1,0 +1,207 @@
+{
+  "version": 1,
+  "devices": [
+    {
+      "uid": 1,
+      "name": "MOXA 1",
+      "ip": "169.254.10.81",
+      "port": 502,
+      "timeout": 2000,
+      "mode": "real",
+      "names": [
+        "בדיקה 1",
+        "2",
+        "בדיקה 4",
+        "Channel4",
+        "Channel5",
+        "Channel6"
+      ],
+      "config": [
+        {
+          "active": true,
+          "first": 4,
+          "pulse": 1000,
+          "repeat": 3,
+          "between": 1000,
+          "trigger": 0
+        },
+        {
+          "active": true,
+          "first": 500,
+          "pulse": 1000,
+          "repeat": 3,
+          "between": 1000,
+          "trigger": 0
+        },
+        {
+          "active": true,
+          "first": 1000,
+          "pulse": 1000,
+          "repeat": 3,
+          "between": 1000,
+          "trigger": 0
+        },
+        {
+          "active": true,
+          "first": 1500,
+          "pulse": 1000,
+          "repeat": 3,
+          "between": 1000,
+          "trigger": 0
+        },
+        {
+          "active": true,
+          "first": 2000,
+          "pulse": 1000,
+          "repeat": 3,
+          "between": 1000,
+          "trigger": 0
+        },
+        {
+          "active": true,
+          "first": 2500,
+          "pulse": 1000,
+          "repeat": 3,
+          "between": 1000,
+          "trigger": 0
+        }
+      ],
+      "password": "",
+      "continuous_states": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
+      ],
+      "collapsed": false,
+      "manual_selection": {
+        "continuousSelect": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "momentarySelect": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "uid": 2,
+      "name": "MOXA 2",
+      "ip": "169.254.10.82",
+      "port": 502,
+      "timeout": 2000,
+      "mode": "real",
+      "names": [
+        "Channel1",
+        "Channel2",
+        "Channel3",
+        "Channel4",
+        "Channel5",
+        "Channel6"
+      ],
+      "config": [
+        {
+          "active": true,
+          "first": 0,
+          "pulse": 1000,
+          "repeat": 3,
+          "between": 1000,
+          "trigger": 0
+        },
+        {
+          "active": true,
+          "first": 500,
+          "pulse": 1000,
+          "repeat": 3,
+          "between": 1000,
+          "trigger": 0
+        },
+        {
+          "active": true,
+          "first": 1000,
+          "pulse": 1000,
+          "repeat": 3,
+          "between": 1000,
+          "trigger": 0
+        },
+        {
+          "active": true,
+          "first": 1500,
+          "pulse": 1000,
+          "repeat": 3,
+          "between": 1000,
+          "trigger": 0
+        },
+        {
+          "active": true,
+          "first": 2000,
+          "pulse": 1000,
+          "repeat": 3,
+          "between": 1000,
+          "trigger": 0
+        },
+        {
+          "active": true,
+          "first": 2500,
+          "pulse": 1000,
+          "repeat": 3,
+          "between": 1000,
+          "trigger": 0
+        }
+      ],
+      "password": "",
+      "continuous_states": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
+      ],
+      "collapsed": false,
+      "manual_selection": {
+        "continuousSelect": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "momentarySelect": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ]
+      }
+    }
+  ],
+  "pulse": 0,
+  "timestamps": true,
+  "scenarios": {},
+  "default_mode": "real",
+  "reset_input": {
+    "ip": "",
+    "channel": 1
+  },
+  "confirm_actions": false,
+  "auto_pulse_preview": true,
+  "countdown": {
+    "enabled": false,
+    "seconds": 5
+  }
+}

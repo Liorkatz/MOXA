@@ -1,0 +1,61 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ui version="4.0">
+ <class>settings</class>
+ <widget class="QDialog" name="settings">
+  <property name="windowTitle">
+   <string>MOXA Control — Settings</string>
+  </property>
+  <layout class="QVBoxLayout" name="settingsLayout">
+   <item>
+    <widget class="QLabel" name="settingsTitle">
+     <property name="text">
+      <string>Application settings</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="settingsNote">
+     <property name="text">
+      <string>Simulation only · Settings apply for this session.</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="durationLabel">
+     <property name="text">
+      <string>Default manual momentary duration (ms)</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QSpinBox" name="defaultPulse">
+     <property name="maximum">
+      <number>3600000</number>
+     </property>
+     <property name="value">
+      <number>0</number>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="timestampsCheck">
+     <property name="text">
+      <string>Show timestamps</string>
+     </property>
+     <property name="checked">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="dialogButtons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Cancel|QDialogButtonBox::Save</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

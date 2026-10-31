@@ -1,0 +1,49 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ui version="4.0">
+ <class>moxa_control</class>
+ <widget class="QMainWindow" name="moxa_control">
+  <property name="windowTitle">
+   <string>MOXA Control</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="mainLayout">
+    <item>
+     <layout class="QHBoxLayout" name="brandLayout">
+      <item>
+       <widget class="QLabel" name="brandLabel">
+        <property name="text">
+         <string>MOXA Control</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </item>
+    <item>
+     <widget class="QTabWidget" name="screens">
+      <widget class="QWidget" name="homeTab">
+       <attribute name="title">
+        <string>Home</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="homeTabLayout" />
+      </widget>
+      <widget class="QWidget" name="connectionsTab">
+       <attribute name="title">
+        <string>ADD MOXA</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="connectionsTabLayout" />
+      </widget>
+      <widget class="QWidget" name="logTab">
+       <attribute name="title">
+        <string>LOG</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="logTabLayout" />
+      </widget>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QStatusBar" name="statusbar" />
+ </widget>
+ <resources />
+ <connections />
+</ui>

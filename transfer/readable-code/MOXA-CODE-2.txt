@@ -1,0 +1,2338 @@
+@@MOXA_FILE {"path": "config_store.py", "encoding": "utf8", "sha256": "3958e1189c1cac61e9e5d21839a6d31cc346e1b4e1f103992efbc54d0f5ea002"}
+"""Local text configuration; passwords are stored as requested in plain text."""
+import base64
+import ctypes
+from ctypes import wintypes
+import json
+import os
+from pathlib import Path
+
+
+class Blob(ctypes.Structure):
+    _fields_ = [('size',wintypes.DWORD),('data',ctypes.POINTER(ctypes.c_ubyte))]
+
+
+def protect(value, decrypt=False):
+    raw = base64.b64decode(value) if decrypt else value.encode('utf-8')
+    buffer = ctypes.create_string_buffer(raw)
+    source = Blob(len(raw),ctypes.cast(buffer,ctypes.POINTER(ctypes.c_ubyte)))
+    target = Blob()
+    crypt = ctypes.WinDLL('crypt32',use_last_error=True)
+    function = crypt.CryptUnprotectData if decrypt else crypt.CryptProtectData
+    function.argtypes = [ctypes.POINTER(Blob),ctypes.c_void_p,ctypes.c_void_p,ctypes.c_void_p,ctypes.c_void_p,wintypes.DWORD,ctypes.POINTER(Blob)]
+    function.restype = wintypes.BOOL
+    if not function(ctypes.byref(source),None,None,None,None,1,ctypes.byref(target)):
+        raise OSError(ctypes.get_last_error(),'Windows password protection failed')
+    try:
+        result = ctypes.string_at(target.data,target.size)
+        return result.decode('utf-8') if decrypt else base64.b64encode(result).decode('ascii')
+    finally:
+        kernel = ctypes.WinDLL('kernel32')
+        kernel.LocalFree.argtypes = [ctypes.c_void_p]
+        kernel.LocalFree(ctypes.cast(target.data,ctypes.c_void_p))
+
+
+def save(path, devices, pulse, timestamps, scenarios=None, default_mode='simulation', reset_input=None, confirm_actions=False, auto_pulse_preview=False, countdown=None):
+    records = []
+    for device in devices:
+        record = {key:device[key] for key in ('uid','name','ip','port','timeout','mode','names','config')}
+        record['password'] = device.get('password','')
+        record['continuous_states'] = list(device.get('baseline', device['states']))
+        record['collapsed'] = bool(device.get('collapsed', False))
+        record['manual_selection'] = device.get('manual_selection', {})
+        records.append(record)
+    path = Path(path)
+    temporary = path.with_suffix('.tmp')
+    temporary.write_text(json.dumps(dict(version=1,devices=records,pulse=pulse,timestamps=timestamps,scenarios=scenarios or {},default_mode=default_mode,reset_input=reset_input or {'ip':'','channel':1},confirm_actions=bool(confirm_actions),auto_pulse_preview=bool(auto_pulse_preview),countdown=countdown or {'enabled':False,'seconds':3}),ensure_ascii=False,indent=2),encoding='utf-8')
+    os.replace(temporary,path)
+
+
+def load(path):
+    data = json.loads(Path(path).read_text(encoding='utf-8'))
+    if data.get('version') != 1 or not isinstance(data.get('devices'),list) or len(data['devices']) > 5:
+        raise ValueError('Invalid saved configuration')
+    for record in data['devices']:
+        encrypted = record.pop('password_protected','')
+        if encrypted:
+            record['password'] = protect(encrypted,True)
+        else:
+            record.setdefault('password','')
+    return data
+
+@@MOXA_END
+@@MOXA_FILE {"path": "moxa_backend.py", "encoding": "utf8", "sha256": "656010299bb2f77b56fdccd533f95a3f8026c8e4b4a9195cabd8c1751dc08ea2"}
+"""ioLogik E1214 default Modbus mapping. Writes are never retried."""
+import socket
+import struct
+import ctypes
+from pathlib import Path
+from threading import RLock
+from concurrent.futures import ThreadPoolExecutor
+from PySide6.QtCore import QObject, Signal
+
+
+class ModbusError(Exception):
+    pass
+
+
+class E1214Client:
+    def __init__(self, ip, port=502, timeout=2000, unit=1):
+        self.ip, self.port, self.timeout, self.unit = ip, port, timeout / 1000, unit
+        self.transaction = 0
+
+    @staticmethod
+    def receive(sock, size):
+        data = b''
+        while len(data) < size:
+            part = sock.recv(size - len(data))
+            if not part:
+                raise ModbusError('Connection closed before complete reply')
+            data += part
+        return data
+
+    def request(self, function, payload):
+        self.transaction = (self.transaction + 1) % 65536
+        pdu = bytes([function]) + payload
+        packet = struct.pack('>HHHB', self.transaction, 0, len(pdu) + 1, self.unit) + pdu
+        with socket.create_connection((self.ip, self.port), self.timeout) as sock:
+            sock.settimeout(self.timeout)
+            sock.sendall(packet)
+            transaction, protocol, length, unit = struct.unpack('>HHHB', self.receive(sock, 7))
+            if (transaction, protocol, unit) != (self.transaction, 0, self.unit) or not 2 <= length <= 254:
+                raise ModbusError('Invalid Modbus reply header')
+            reply = self.receive(sock, length - 1)
+        if reply[0] == function | 0x80:
+            raise ModbusError(f'Modbus exception {reply[1] if len(reply)>1 else "?"}; check device configuration / IP access rules')
+        if reply[0] != function:
+            raise ModbusError('Unexpected Modbus function')
+        return reply[1:]
+
+    def bits(self, function, count=6):
+        result = self.request(function, struct.pack('>HH', 0, count))
+        size = (count + 7) // 8
+        if len(result) != size + 1 or result[0] != size:
+            raise ModbusError('Invalid bit response')
+        return [bool(result[1 + i // 8] & (1 << (i % 8))) for i in range(count)]
+
+    def identify(self):
+        result = self.request(4, struct.pack('>HH', 5000, 10))
+        if len(result) != 21 or result[0] != 20:
+            raise ModbusError('Invalid model identification')
+        model = result[1:].replace(b'\0', b'').decode('ascii', 'replace').strip()
+        if 'E1214' not in model.upper():
+            raise ModbusError(f'Unsupported model: {model}; only E1214 default mapping is enabled')
+        return model
+
+    def connect(self):
+        model = self.identify()
+        return dict(model=model, states=self.bits(1), inputs=self.bits(2))
+
+    def write(self, channel, value):
+        if not 0 <= channel < 6:
+            raise ModbusError('Invalid relay channel')
+        payload = struct.pack('>HH', channel, 0xFF00 if value else 0)
+        if self.request(5, payload) != payload:
+            raise ModbusError('Relay write acknowledgement mismatch; output state is unknown')
+        states = self.bits(1)
+        if states[channel] != bool(value):
+            raise ModbusError('Relay readback differs from requested value')
+        return states
+
+
+class HardwareQueue(QObject):
+    delivered = Signal(object, object, object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.executors = {}
+        self.closed = False
+        self.delivered.connect(self.dispatch)
+
+    def submit(self, uid, operation, success, failure):
+        if self.closed: return
+        if uid not in self.executors:
+            self.executors[uid] = ThreadPoolExecutor(max_workers=1)
+        executor = self.executors[uid]
+        future = executor.submit(operation)
+        def finished(future):
+            try:
+                result = future.result()
+            except Exception as exc:
+                try: self.delivered.emit(failure, str(exc), None)
+                except RuntimeError: pass
+            else:
+                try: self.delivered.emit(success, result, None)
+                except RuntimeError: pass
+        future.add_done_callback(finished)
+
+    def dispatch(self, callback, result, unused):
+        if not self.closed: callback(result)
+
+    def close(self):
+        self.closed = True
+        for executor in self.executors.values():
+            executor.shutdown(wait=False, cancel_futures=True)
+
+
+class AuthenticatedE1214:
+    """Password login through MOXA's MXIO SDK, rather than invented Modbus auth."""
+    lock = RLock()
+    library = None
+
+    def __init__(self, ip, port, timeout, password):
+        self.ip, self.port, self.timeout, self.password = ip, port, timeout, password
+        self.handle = None
+
+    @classmethod
+    def sdk(cls):
+        if cls.library is None:
+            path = Path(__file__).parent / 'vendor' / 'MXIO.dll'
+            if not path.is_file():
+                raise ModbusError('Password login requires the official 64-bit MOXA MXIO SDK: place MXIO.dll and its dependencies in C:/moxa/vendor. Password was not sent.')
+            try:
+                cls.library = ctypes.WinDLL(str(path))
+            except OSError as exc:
+                raise ModbusError('Cannot load the MOXA MXIO SDK; verify 64-bit DLL and dependencies') from exc
+            lib = cls.library
+            specs = {
+                'MXEIO_Init': [],
+                'MXEIO_E1K_Connect': [ctypes.c_char_p, ctypes.c_uint16, ctypes.c_uint32, ctypes.POINTER(ctypes.c_int32), ctypes.c_char_p],
+                'MXEIO_Disconnect': [ctypes.c_int32],
+                'MXIO_GetModuleType': [ctypes.c_int32, ctypes.c_uint8, ctypes.POINTER(ctypes.c_uint16)],
+                'MXIO_ReadCoils': [ctypes.c_int32, ctypes.c_uint8, ctypes.c_uint16, ctypes.c_uint16, ctypes.POINTER(ctypes.c_uint8)],
+                'MXIO_WriteCoils': [ctypes.c_int32, ctypes.c_uint16, ctypes.c_uint16, ctypes.POINTER(ctypes.c_uint8)],
+            }
+            try:
+                for name, args in specs.items():
+                    function = getattr(lib,name)
+                    function.argtypes, function.restype = args, ctypes.c_int32
+                cls.check(lib.MXEIO_Init())
+            except Exception:
+                cls.library = None
+                raise
+        return cls.library
+
+    @staticmethod
+    def check(code):
+        if code != 0:
+            messages = {2001:'Device response timed out',2004:'Invalid device response',
+                        2005:'Connection closed by device',2007:'Incorrect MOXA password',
+                        1002:'Invalid register mapping; default E1214 mapping is required',
+                        4001:'Device / function not supported by the SDK',4002:'Invalid connection handle'}
+            raise ModbusError(f'{messages.get(code,"MOXA SDK error")} (code {code})')
+
+    def connect(self):
+        with self.lock:
+            lib = self.sdk()
+            handle = ctypes.c_int32()
+            try:
+                password = self.password.encode('ascii')
+            except UnicodeEncodeError:
+                raise ModbusError('MOXA SDK password must use ASCII characters') from None
+            if b'\0' in password:
+                raise ModbusError('Password contains an unsupported character')
+            if len(password) > 16:
+                raise ModbusError('This MOXA SDK supports passwords of up to 16 ASCII characters')
+            self.check(lib.MXEIO_E1K_Connect(self.ip.encode('ascii'),self.port,self.timeout,ctypes.byref(handle),password))
+            self.handle = handle.value
+            try:
+                model = ctypes.c_uint16()
+                self.check(lib.MXIO_GetModuleType(self.handle,0,ctypes.byref(model)))
+                if model.value != 0x1214:
+                    raise ModbusError(f'Unsupported model E{model.value:X}; E1214 required')
+                return dict(model='ioLogik E1214 (MXIO authenticated)',states=self.bits(1),inputs=self.bits(2))
+            except Exception:
+                self.close()
+                raise
+
+    def bits(self,function,count=6):
+        with self.lock:
+            if self.handle is None:
+                raise ModbusError('Not connected')
+            data = (ctypes.c_uint8 * ((count+7)//8))()
+            self.check(self.sdk().MXIO_ReadCoils(self.handle,function,0,count,data))
+            return [bool(data[i//8] & (1 << (i%8))) for i in range(count)]
+
+    def write(self,channel,value):
+        with self.lock:
+            if self.handle is None or not 0 <= channel < 6:
+                raise ModbusError('Not connected or invalid channel')
+            data = (ctypes.c_uint8 * 1)(1 if value else 0)
+            self.check(self.sdk().MXIO_WriteCoils(self.handle,channel,1,data))
+            states = self.bits(1)
+            if states[channel] != bool(value):
+                raise ModbusError('Relay readback differs from requested state')
+            return states
+
+    def close(self):
+        with self.lock:
+            if self.handle is not None:
+                self.sdk().MXEIO_Disconnect(self.handle)
+                self.handle = None
+
+
+def make_client(values):
+    if values.get('password'):
+        return AuthenticatedE1214(values['ip'],values['port'],values['timeout'],values['password'])
+    return E1214Client(values['ip'],values['port'],values['timeout'])
+
+@@MOXA_END
+@@MOXA_FILE {"path": "network_discovery.py", "encoding": "utf8", "sha256": "31c274ab102c0838d44f423df892971c4dcc0ee38bfa4f557644e3cbc2f5b8a6"}
+"""Read-only Modbus TCP discovery; no relay writes or password attempts."""
+import socket
+import struct
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from ipaddress import IPv4Network
+from PySide6.QtCore import QThread, Signal, Qt
+from PySide6.QtNetwork import QNetworkInterface
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
+                              QPushButton, QTableWidget, QTableWidgetItem,
+                              QAbstractItemView, QHeaderView, QSpinBox)
+
+
+def receive(sock, size):
+    data = b''
+    while len(data) < size:
+        part = sock.recv(size - len(data))
+        if not part:
+            raise OSError('Incomplete reply')
+        data += part
+    return data
+
+
+def probe_mei(ip, port):
+    try:
+        with socket.create_connection((ip, port), timeout=0.5) as sock:
+            sock.settimeout(0.7)
+            # FC43 / MEI14: basic device identification, unit identifier 1.
+            sock.sendall(bytes.fromhex('000100000005012b0e0100'))
+            transaction, protocol, length, unit = struct.unpack('>HHHB', receive(sock, 7))
+            if transaction != 1 or protocol != 0 or unit != 1 or not 2 <= length <= 254:
+                return None
+            body = receive(sock, length - 1)
+            if body[0] == 0xAB and len(body) == 2:
+                return dict(ip=ip, port=port, identity='Modbus TCP · model unverified')
+            if len(body) < 7 or body[:3] != b'\x2b\x0e\x01':
+                return None
+            objects, offset = {}, 7
+            for _ in range(body[6]):
+                if offset + 2 > len(body):
+                    return None
+                key, size = body[offset:offset+2]
+                offset += 2
+                if offset + size > len(body):
+                    return None
+                objects[key] = body[offset:offset+size].decode('utf-8', 'replace')
+                offset += size
+            identity = ' · '.join(objects[k] for k in (0, 1, 2) if objects.get(k))
+            return dict(ip=ip, port=port, identity=identity or 'Modbus TCP · model unverified')
+    except (OSError, ValueError, struct.error):
+        return None
+
+
+def probe(ip, port):
+    result = probe_mei(ip,port)
+    if result and 'unverified' not in result['identity']:
+        return result
+    # Older E1214 firmware may not implement FC43; use documented model registers.
+    from moxa_backend import E1214Client
+    try:
+        model = E1214Client(ip,port,500).identify()
+        return dict(ip=ip,port=port,identity=model)
+    except Exception:
+        return result
+
+
+class ScanWorker(QThread):
+    found = Signal(dict)
+    progress = Signal(int, int)
+
+    def __init__(self, hosts, port, parent=None):
+        super().__init__(parent)
+        self.hosts, self.port = hosts, port
+
+    def run(self):
+        with ThreadPoolExecutor(max_workers=24) as pool:
+            futures = [pool.submit(probe, ip, self.port) for ip in self.hosts]
+            for count, future in enumerate(as_completed(futures), 1):
+                if self.isInterruptionRequested():
+                    for pending in futures:
+                        pending.cancel()
+                    break
+                result = future.result()
+                if result:
+                    self.found.emit(result)
+                self.progress.emit(count, len(futures))
+
+
+class DiscoveryDialog(QDialog):
+    selected = Signal(dict)
+
+    def __init__(self, devices, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Find network units')
+        self.resize(790, 470)
+        self.devices, self.results, self.worker = devices, {}, None
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel('Scan a local IPv4 range · read-only Modbus TCP identification'))
+        row = QHBoxLayout()
+        self.network = QComboBox()
+        self.network.setEditable(True)
+        networks = set()
+        for interface in QNetworkInterface.allInterfaces():
+            for entry in interface.addressEntries():
+                ip = entry.ip().toString()
+                try:
+                    network = IPv4Network(f'{ip}/{entry.prefixLength()}', strict=False)
+                    if not network.is_loopback:
+                        networks.add(str(network if network.prefixlen >= 24 else IPv4Network(f'{ip}/24', strict=False)))
+                except ValueError:
+                    pass
+        self.network.addItems(sorted(networks) or ['169.254.10.0/24'])
+        row.addWidget(self.network, 1)
+        row.addWidget(QLabel('Port'))
+        self.port = QSpinBox()
+        self.port.setRange(1, 65535)
+        self.port.setValue(502)
+        row.addWidget(self.port)
+        self.scan = QPushButton('Scan network')
+        self.scan.clicked.connect(self.start_scan)
+        row.addWidget(self.scan)
+        self.cancel = QPushButton('Cancel scan')
+        self.cancel.setEnabled(False)
+        self.cancel.clicked.connect(self.cancel_scan)
+        row.addWidget(self.cancel)
+        layout.addLayout(row)
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(['IP address', 'Port', 'Identification', 'Added / New'])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.table.setFixedHeight(180)
+        self.table.setShowGrid(True)
+        self.table.setGridStyle(Qt.PenStyle.SolidLine)
+        self.table.verticalHeader().setDefaultSectionSize(28)
+        self.table.verticalHeader().hide()
+        layout.addWidget(self.table)
+        self.status = QLabel('Saved units are listed below. Scan to find additional units; identification may be unavailable on some models.')
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+        self.use = QPushButton('Use selected unit in add / edit form')
+        self.use.setEnabled(False)
+        self.use.clicked.connect(self.use_selected)
+        self.table.itemSelectionChanged.connect(lambda: self.use.setEnabled(self.table.currentRow() >= 0 and not (self.worker and self.worker.isRunning())))
+        layout.addWidget(self.use)
+        self.show_saved()
+
+    def show_saved(self):
+        for device in self.devices:
+            self.add_result(dict(ip=device['ip'], port=device['port'], identity=f'{device["name"]} · saved, not scanned'))
+
+    def add_result(self, result):
+        key = (result['ip'], result['port'])
+        row = self.results.get(key)
+        if row is None:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.results[key] = row
+        added = any(d['ip'] == result['ip'] for d in self.devices)
+        for col, text in enumerate((result['ip'], str(result['port']), result['identity'], 'Already added' if added else 'New · verify model')):
+            item = QTableWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, result)
+            self.table.setItem(row, col, item)
+
+    def start_scan(self):
+        try:
+            network = IPv4Network(self.network.currentText().strip(), strict=False)
+            if network.num_addresses > 256 or network.is_multicast or network.is_unspecified:
+                raise ValueError()
+        except ValueError:
+            self.status.setText('Enter an IPv4 range of /24 or smaller, for example 192.168.1.0/24.')
+            return
+        self.table.setRowCount(0)
+        self.results.clear()
+        self.show_saved()
+        self.scan.setEnabled(False)
+        self.cancel.setEnabled(True)
+        self.use.setEnabled(False)
+        self.network.setEnabled(False)
+        self.port.setEnabled(False)
+        self.status.setText('Scanning…')
+        self.worker = ScanWorker([str(ip) for ip in network.hosts()], self.port.value(), self)
+        self.worker.found.connect(self.add_result)
+        self.worker.progress.connect(lambda n, total: self.status.setText(f'Scanning {n} / {total} addresses…'))
+        self.worker.finished.connect(self.scan_finished)
+        self.worker.start()
+
+    def cancel_scan(self):
+        if self.worker:
+            self.worker.requestInterruption()
+            self.status.setText('Cancelling scan…')
+
+    def scan_finished(self):
+        cancelled = self.worker.isInterruptionRequested()
+        self.status.setText(('Scan cancelled.' if cancelled else 'Scan complete.') + ' Select a result, then save it in the form. Unidentified or protected devices can be added manually.')
+        self.scan.setEnabled(True)
+        self.cancel.setEnabled(False)
+        self.network.setEnabled(True)
+        self.port.setEnabled(True)
+        self.use.setEnabled(self.table.currentRow() >= 0)
+
+    def use_selected(self):
+        item = self.table.item(self.table.currentRow(), 0)
+        if item:
+            self.selected.emit(item.data(Qt.ItemDataRole.UserRole))
+
+    def reject(self):
+        if self.worker and self.worker.isRunning():
+            self.cancel_scan()
+            return
+        super().reject()
+
+@@MOXA_END
+@@MOXA_FILE {"path": "automation_timeline.py", "encoding": "utf8", "sha256": "93741b757ee85bd5171d5a34a4c025a5b99f7d6cfb584d4981fdaa3d3d99b83f"}
+"""Compact timing preview of each channel's configured pulse sequence."""
+from time import monotonic
+from PySide6.QtCore import Qt, QPointF, QRectF, QTimer
+from PySide6.QtGui import QColor, QPainter, QPen, QPainterPath
+from PySide6.QtWidgets import QWidget
+
+
+class AutomationLegend(QWidget):
+    """Always-visible key for the automation settings, matching the reference."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(391, 75)
+        self.setToolTip('Digital In / Run starts First Delay. Each pulse stays ON for Pulse, '
+                        'then OFF for Delay Between. Repeat is the total number of pulses.')
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.scale(self.width() / 460, self.height() / 88)
+        font = painter.font()
+        font.setPointSize(8)
+        painter.setFont(font)
+        painter.setPen(QColor('#53708c'))
+        center = Qt.AlignmentFlag.AlignCenter
+        for rect, text in [
+            (QRectF(0, 22, 100, 32), 'Digital In\n/ Run'),
+            (QRectF(109, 18, 69, 32), 'First\nDelay'),
+            (QRectF(180, 0, 55, 24), 'Pulse'),
+            (QRectF(236, 18, 64, 32), 'Delay\nBetween'),
+            (QRectF(300, 0, 55, 24), 'Pulse'),
+            (QRectF(356, 18, 80, 32), 'Delay\nBetween'),
+        ]:
+            painter.drawText(rect, center, text)
+        painter.setPen(QPen(QColor('#1668b2'), 2))
+        path = QPainterPath(QPointF(101, 56))
+        for x, y in [(180, 56), (180, 27), (235, 27), (235, 56),
+                     (300, 56), (300, 27), (355, 27), (355, 56), (438, 56)]:
+            path.lineTo(x, y)
+        painter.drawPath(path)
+        painter.drawLine(QPointF(101, 56), QPointF(95, 52))
+        painter.drawLine(QPointF(101, 56), QPointF(95, 60))
+        painter.setPen(QPen(QColor('#8da9c8'), 1))
+        painter.drawLine(180, 63, 180, 69)
+        painter.drawLine(180, 69, 355, 69)
+        painter.drawLine(355, 69, 355, 63)
+        painter.setPen(QColor('#53708c'))
+        painter.drawText(QRectF(180, 70, 175, 18), center, 'Repeat × N pulses')
+
+
+class AutomationTimeline(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.device = None
+        self.started = None
+        self.elapsed = None
+        self.running_configs = None
+        self.paused = False
+        self.timer = QTimer(self)
+        self.timer.setInterval(40)
+        self.timer.timeout.connect(self.advance)
+        self.setMinimumHeight(410)
+        self.setToolTip('Configuration preview in milliseconds. Up to 10 pulses shown per channel. '
+                        'First Delay → ON for Pulse → OFF for Delay Between → repeat.')
+
+    def set_device(self, device):
+        self.device = device
+        self.update()
+
+    def set_jobs(self, jobs):
+        active = {i: job for (uid, i), job in jobs.items() if uid == self.device['uid'] and job['config'].get('kind') != 'manual'}
+        if active:
+            started = self.device.get('_clock_started', min(job['started'] for job in active.values()))
+            if self.started != started:
+                self.elapsed = 0
+            self.started = started
+            self.running_configs = [dict(c) for c in self.device['config']]
+            for i, job in active.items():
+                self.running_configs[i] = job['config']
+            self.paused = all(job.get('paused') for job in active.values())
+            if self.paused:
+                self.elapsed = max(0, (min(job['paused'] for job in active.values()) - started) * 1000)
+                self.timer.stop()
+            else:
+                self.timer.start()
+                self.advance()
+        else:
+            self.paused = False
+            if self.timer.isActive():
+                self.advance()
+            self.timer.stop()
+            self.started = None
+        self.update()
+
+    def advance(self):
+        if self.started is not None:
+            self.elapsed = max(0, (monotonic() - self.started) * 1000)
+        if self.isVisible():
+            self.update()
+
+    def paintEvent(self, event):
+        if self.device is None:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), QColor('#f3f7fc'))
+        painter.setPen(QColor('#20314b'))
+        painter.drawText(12, 21, 'Timing preview · ms · first 10 pulses')
+        font = painter.font()
+        font.setPointSize(8)
+        painter.setFont(font)
+        painter.setPen(QColor('#53708c'))
+        painter.drawText(12, 41, 'ms')
+        configs = self.running_configs if self.timer.isActive() or self.paused else self.device['config']
+        def duration(cfg):
+            n = min(10, cfg['repeat'])
+            return cfg['first'] + n * cfg['pulse'] + max(0, n - 1) * cfg['between']
+        total = max([duration(c) for c in configs if c['active'] and c['repeat']] or [1])
+        left, right = 108, max(109, self.width() - 64)
+        scale = (right - left) / max(1, total)
+        boundaries = {0}
+        guides = []
+        for i, cfg in enumerate(configs):
+            y = 76 + i * 52
+            active = cfg['active'] and cfg['repeat'] > 0
+            painter.setPen(QColor('#20314b' if active else '#8e98a6'))
+            name = self.device['names'][i]
+            name = painter.fontMetrics().elidedText(name, Qt.TextElideMode.ElideRight, 90)
+            painter.drawText(10, y - 5, name)
+            painter.setPen(QPen(QColor('#d8e1ec'), 1))
+            painter.drawLine(QPointF(left, y), QPointF(right, y))
+            if not active:
+                painter.setPen(QColor('#8e98a6'))
+                painter.drawText(int(left + 5), y - 5, 'Skipped')
+                continue
+            path = QPainterPath(QPointF(left, y))
+            t = cfg['first']
+            boundaries.add(t)
+            guides.append((t, y))
+            path.lineTo(left + t * scale, y)
+            for pulse in range(min(10, cfg['repeat'])):
+                path.lineTo(left + t * scale, y - 15)
+                t += cfg['pulse']
+                boundaries.add(t)
+                guides.append((t, y))
+                path.lineTo(left + t * scale, y - 15)
+                path.lineTo(left + t * scale, y)
+                if pulse < min(10, cfg['repeat']) - 1:
+                    t += cfg['between']
+                    boundaries.add(t)
+                    guides.append((t, y))
+                    path.lineTo(left + t * scale, y)
+            painter.setPen(QPen(QColor('#1668b2'), 2))
+            painter.drawPath(path)
+            painter.setPen(QColor('#53708c'))
+            painter.drawText(int(right + 8), y - 4, f'×{cfg["repeat"]}')
+        painter.setPen(QPen(QColor('#a8bdd5'), 1, Qt.PenStyle.DashLine))
+        guide_starts = {}
+        for value, y in guides:
+            guide_starts[value] = min(y, guide_starts.get(value, y))
+        for value, y in guide_starts.items():
+            x = left + value * scale
+            painter.drawLine(QPointF(x, y + 3), QPointF(x, 357))
+        painter.setPen(QColor('#53708c'))
+        painter.drawLine(QPointF(left, 357), QPointF(right, 357))
+        lanes = []
+        for value in sorted(boundaries):
+            x = left + value * scale
+            label = f'{value:,}'
+            width = painter.fontMetrics().horizontalAdvance(label) + 8
+            labelLeft = max(left - 8, min(x - width / 2, right - width + 8))
+            lane = next((i for i, edge in enumerate(lanes) if edge + 8 <= labelLeft), len(lanes))
+            if lane == len(lanes):
+                lanes.append(0)
+            lanes[lane] = labelLeft + width
+            painter.drawLine(QPointF(x, 354), QPointF(x, 361))
+            painter.drawText(QRectF(labelLeft, 365 + lane * 18, width, 18), Qt.AlignmentFlag.AlignCenter, label)
+        footer = 390 + len(lanes) * 18
+        required = footer + 14
+        if self.minimumHeight() != required:
+            self.setMinimumHeight(required)
+        if self.elapsed is not None:
+            x = left + min(total, self.elapsed) * scale
+            painter.setPen(QPen(QColor('#e17422'), 2))
+            for i in range(6):
+                y = 76 + i * 52
+                painter.drawLine(QPointF(x, y - 20), QPointF(x, y + 3))
+            painter.setPen(QColor('#ad5311'))
+            state = 'Paused' if self.paused else ('Running' if self.timer.isActive() else 'Stopped / finished')
+            painter.drawText(int(left), footer, f'{state} · {self.elapsed:,.0f} ms')
+
+@@MOXA_END
+@@MOXA_FILE {"path": "combined_timeline.py", "encoding": "utf8", "sha256": "329036c15e2361f87416276705c2792ec42041453ddf20a33e3dd419c0941549"}
+"""Shared time scale for all configured MOXA pulse sequences."""
+from time import monotonic
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
+from PySide6.QtWidgets import QWidget
+
+
+class CombinedTimeline(QWidget):
+    COLORS = ('#1668b2', '#c35b13', '#16835c', '#8754ba', '#bb3e79')
+
+    def __init__(self, controller, parent=None):
+        super().__init__(parent)
+        self.controller = controller
+        self.setMinimumWidth(800)
+        self.refresh = QTimer(self)
+        self.refresh.setInterval(40)
+        self.refresh.timeout.connect(self.update)
+        self.refresh.start()
+
+    def paintEvent(self, event):
+        devices, jobs = self.controller.devices, self.controller.jobs
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), QColor('#f7f9fc'))
+        traces = []
+        total = 1
+        for device in devices:
+            rows = []
+            for i, config in enumerate(device['config']):
+                job = jobs.get((device['uid'], i))
+                if job and job['config'].get('kind') == 'manual': job = None
+                cfg = job['config'] if job else config
+                active = cfg.get('active', True) and cfg['repeat'] > 0
+                n = min(10, cfg['repeat'])
+                duration = cfg['first'] + n * cfg['pulse'] + max(0, n - 1) * cfg['between']
+                if active:
+                    total = max(total, duration)
+                rows.append((cfg, active, job))
+            traces.append(rows)
+        left, right = 170, self.width() - 50
+        scale = (right - left) / total
+        painter.setPen(QColor('#53708c'))
+        painter.drawText(12, 23, 'All units · shared time axis (ms) · first 10 pulses per channel')
+        axis = 55 + len(devices) * 222
+        boundaries = {0}
+        guides = {}
+        for unit, (device, rows) in enumerate(zip(devices, traces)):
+            color = QColor(self.COLORS[unit % len(self.COLORS)])
+            top = 50 + unit * 222
+            painter.setPen(color)
+            painter.drawText(12, top, f'{device["name"]} · {device["ip"]}')
+            for i, (cfg, active, job) in enumerate(rows):
+                y = top + 28 + i * 30
+                painter.setPen(QColor('#53708c'))
+                name = painter.fontMetrics().elidedText(device['names'][i], Qt.TextElideMode.ElideRight, 150)
+                painter.drawText(12, y, name)
+                painter.setPen(QPen(QColor('#dce5f0'), 1))
+                painter.drawLine(QPointF(left, y), QPointF(right, y))
+                if not active:
+                    continue
+                path = QPainterPath(QPointF(left, y))
+                t = cfg['first']
+                boundaries.add(t)
+                guides[t] = min(y, guides.get(t, y))
+                path.lineTo(left + t * scale, y)
+                for pulse in range(min(10, cfg['repeat'])):
+                    path.lineTo(left + t * scale, y - 14)
+                    t += cfg['pulse']
+                    boundaries.add(t)
+                    guides[t] = min(y, guides.get(t, y))
+                    path.lineTo(left + t * scale, y - 14)
+                    path.lineTo(left + t * scale, y)
+                    if pulse < min(10, cfg['repeat']) - 1:
+                        t += cfg['between']
+                        boundaries.add(t)
+                        guides[t] = min(y, guides.get(t, y))
+                        path.lineTo(left + t * scale, y)
+                painter.setPen(QPen(color, 2))
+                painter.drawPath(path)
+                if job:
+                    elapsed = ((job.get('paused') or monotonic()) - job['started']) * 1000
+                    x = left + min(total, max(0, elapsed)) * scale
+                    painter.setPen(QPen(color.darker(130), 2, Qt.PenStyle.DashLine))
+                    painter.drawLine(QPointF(x, y - 19), QPointF(x, y + 4))
+        painter.setPen(QPen(QColor('#a8bdd5'), 1, Qt.PenStyle.DashLine))
+        for value, y in guides.items():
+            x = left + value * scale
+            painter.drawLine(QPointF(x, y + 3), QPointF(x, axis))
+        painter.setPen(QColor('#53708c'))
+        painter.drawLine(QPointF(left, axis), QPointF(right, axis))
+        lanes = []
+        for value in sorted(boundaries):
+            x = left + value * scale
+            label = f'{value:,}'
+            width = painter.fontMetrics().horizontalAdvance(label) + 8
+            labelLeft = max(left - 8, min(x - width / 2, right - width + 8))
+            lane = next((i for i, edge in enumerate(lanes) if edge + 8 <= labelLeft), len(lanes))
+            if lane == len(lanes):
+                lanes.append(0)
+            lanes[lane] = labelLeft + width
+            painter.drawLine(QPointF(x, axis - 3), QPointF(x, axis + 4))
+            painter.drawText(QRectF(labelLeft, axis + 8 + lane * 18, width, 18), Qt.AlignmentFlag.AlignCenter, label)
+        required = axis + 38 + len(lanes) * 18
+        if self.minimumHeight() != required:
+            self.setMinimumHeight(required)
+
+@@MOXA_END
+@@MOXA_FILE {"path": "moxa_control.ui", "encoding": "utf8", "sha256": "54a4b04f049d2e828bca25a92b37bfceed845616a85687f857091dec299305f3"}
+<?xml version='1.0' encoding='utf-8'?>
+<ui version="4.0">
+ <class>moxa_control</class>
+ <widget class="QMainWindow" name="moxa_control">
+  <property name="windowTitle">
+   <string>MOXA Control</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="mainLayout">
+    <item>
+     <layout class="QHBoxLayout" name="brandLayout">
+      <item>
+       <widget class="QLabel" name="brandLabel">
+        <property name="text">
+         <string>MOXA Control</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </item>
+    <item>
+     <widget class="QTabWidget" name="screens">
+      <widget class="QWidget" name="homeTab">
+       <attribute name="title">
+        <string>Home</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="homeTabLayout" />
+      </widget>
+      <widget class="QWidget" name="connectionsTab">
+       <attribute name="title">
+        <string>ADD MOXA</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="connectionsTabLayout" />
+      </widget>
+      <widget class="QWidget" name="logTab">
+       <attribute name="title">
+        <string>LOG</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="logTabLayout" />
+      </widget>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QStatusBar" name="statusbar" />
+ </widget>
+ <resources />
+ <connections />
+</ui>
+
+@@MOXA_END
+@@MOXA_FILE {"path": "home.ui", "encoding": "utf8", "sha256": "826d0a08bb9d9bf467fd0ad84f4df49739cdd0d728324fd6c3f299b67ccc2d10"}
+<?xml version='1.0' encoding='utf-8'?>
+<ui version="4.0">
+ <class>home</class>
+ <widget class="QWidget" name="home">
+  <property name="windowTitle">
+   <string>Home</string>
+  </property>
+  <layout class="QVBoxLayout" name="homeLayout">
+   <item>
+    <layout class="QHBoxLayout" name="toolbar">
+     <item>
+      <widget class="QCheckBox" name="showAutomation">
+       <property name="text">
+        <string>Show Automation</string>
+       </property>
+       <property name="checked">
+        <bool>false</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="askConfirm">
+       <property name="text">
+        <string>Ask Prompt</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="runBothButton">
+       <property name="text">
+        <string>Run / Stop Both</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QScrollArea" name="devicesScroll">
+     <property name="widgetResizable">
+      <bool>true</bool>
+     </property>
+     <widget class="QWidget" name="devicesScrollContents">
+      <layout class="QVBoxLayout" name="devicesScrollLayout" />
+     </widget>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="promptLayout">
+     <item>
+      <widget class="QLineEdit" name="promptInput">
+       <property name="placeholderText">
+        <string>Local demo prompt: status or help</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="askPromptButton">
+       <property name="text">
+        <string>Ask Prompt</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>
+
+@@MOXA_END
+@@MOXA_FILE {"path": "manage_moxa.ui", "encoding": "utf8", "sha256": "3ed1732384eb5fb2569dd045c566d71b550c997be9226557077e991b86219aa9"}
+<?xml version='1.0' encoding='utf-8'?>
+<ui version="4.0">
+ <class>manage_moxa</class>
+ <widget class="QWidget" name="manage_moxa">
+  <property name="windowTitle">
+   <string>Manage Moxa</string>
+  </property>
+  <layout class="QVBoxLayout" name="manageLayout">
+   <item>
+    <widget class="QLabel" name="manageTitle">
+     <property name="text">
+      <string>Configured units</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="manageHelp">
+     <property name="text">
+      <string>Up to 5 devices · 6 relay channels per unit · Select a row to manage its connection.</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QTableWidget" name="deviceTable">
+     <property name="columnCount">
+      <number>4</number>
+     </property>
+     <column>
+      <property name="text">
+       <string>Device name</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>IP address</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>Channels</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>Status</string>
+      </property>
+     </column>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="manageActions">
+     <item>
+      <widget class="QPushButton" name="editDeviceButton">
+       <property name="text">
+        <string>Edit selected unit</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="removeDeviceButton">
+       <property name="text">
+        <string>Remove selected</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="toggleDeviceButton">
+       <property name="text">
+        <string>Connect / Disconnect (simulated)</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="deviceHint">
+     <property name="text">
+      <string>All connection operations are simulated.</string>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>
+@@MOXA_END
+@@MOXA_FILE {"path": "add_moxa.ui", "encoding": "utf8", "sha256": "ae6e79ebf92251423ee2662d39d0e6428db7663d2a572c9f28d9042d183177e7"}
+<?xml version='1.0' encoding='utf-8'?>
+<ui version="4.0">
+ <class>add_moxa</class>
+ <widget class="QWidget" name="add_moxa">
+  <property name="windowTitle">
+   <string>Connection Settings</string>
+  </property>
+  <layout class="QVBoxLayout" name="connectionsLayout">
+   <item>
+    <layout class="QHBoxLayout" name="connectionTitleBar">
+     <item>
+      <widget class="QLabel" name="connectionsTitle">
+       <property name="text">
+        <string>Settings</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="settingsButton">
+       <property name="text">
+        <string>Settings</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="connectionsHelp">
+     <property name="text">
+      <string>Configure up to five ioLogik E1214 units. Changes are kept for this session.</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QGridLayout" name="connectionForm">
+     <item row="5" column="0"><widget class="QLabel" name="passwordInputLabel"><property name="text"><string>Password (optional)</string></property></widget></item>
+     <item row="5" column="1"><widget class="QLineEdit" name="passwordInput"><property name="echoMode"><enum>QLineEdit::Password</enum></property><property name="placeholderText"><string>Only if required by the device</string></property></widget></item>
+     <item row="0" column="0" colspan="1">
+      <widget class="QLabel" name="unitSelectorLabel">
+       <property name="text">
+        <string>Unit</string>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1" colspan="1">
+      <widget class="QComboBox" name="unitSelector" />
+     </item>
+     <item row="1" column="0" colspan="1">
+      <widget class="QLabel" name="nameInputLabel">
+       <property name="text">
+        <string>Device name</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1" colspan="1">
+      <widget class="QLineEdit" name="nameInput" />
+     </item>
+     <item row="2" column="0" colspan="1">
+      <widget class="QLabel" name="ipInputLabel">
+       <property name="text">
+        <string>IP address</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="1" colspan="1">
+      <widget class="QLineEdit" name="ipInput" />
+     </item>
+     <item row="3" column="0" colspan="1">
+      <widget class="QLabel" name="portInputLabel">
+       <property name="text">
+        <string>Port</string>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="1" colspan="1">
+      <widget class="QSpinBox" name="portInput">
+       <property name="maximum">
+        <number>65535</number>
+       </property>
+       <property name="value">
+        <number>502</number>
+       </property>
+      </widget>
+     </item>
+     <item row="4" column="0" colspan="1">
+      <widget class="QLabel" name="timeoutInputLabel">
+       <property name="text">
+        <string>Connection timeout (ms)</string>
+       </property>
+      </widget>
+     </item>
+     <item row="4" column="1" colspan="1">
+      <widget class="QSpinBox" name="timeoutInput">
+       <property name="maximum">
+        <number>60000</number>
+       </property>
+       <property name="value">
+        <number>2000</number>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="connectionActions">
+     <item>
+      <widget class="QPushButton" name="newUnitButton">
+       <property name="text">
+        <string>New unit</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="saveConnectionButton">
+       <property name="text">
+        <string>Save unit</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="testConnectionButton">
+       <property name="text">
+        <string>Test connection (simulated)</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="connectionMessage">
+     <property name="text">
+      <string>No physical device connection is made.</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QWidget" name="manageContainer">
+     <layout class="QVBoxLayout" name="manageContainerLayout" />
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>
+
+@@MOXA_END
+@@MOXA_FILE {"path": "log.ui", "encoding": "utf8", "sha256": "df30a9cba39c643dcdf03403581e670096480ff43eaeff260336318126e92acc"}
+<?xml version='1.0' encoding='utf-8'?>
+<ui version="4.0">
+ <class>log</class>
+ <widget class="QWidget" name="log">
+  <property name="windowTitle">
+   <string>LOG</string>
+  </property>
+  <layout class="QVBoxLayout" name="logLayout">
+   <item>
+    <widget class="QLabel" name="logTitle">
+     <property name="text">
+      <string>Event Log</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="logActions">
+     <item>
+      <widget class="QLineEdit" name="filterInput">
+       <property name="placeholderText">
+        <string>Filter log messages…</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="clearLogButton">
+       <property name="text">
+        <string>Clear log</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="exportLogButton">
+       <property name="text">
+        <string>Export log…</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QPlainTextEdit" name="logOutput">
+     <property name="readOnly">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>
+@@MOXA_END
+@@MOXA_FILE {"path": "settings.ui", "encoding": "utf8", "sha256": "02897d1bdf220da389f14de071f3e7ab4eb0a5e3ac6ef7cfb3dc9c35449aebed"}
+<?xml version='1.0' encoding='utf-8'?>
+<ui version="4.0">
+ <class>settings</class>
+ <widget class="QDialog" name="settings">
+  <property name="windowTitle">
+   <string>MOXA Control — Settings</string>
+  </property>
+  <layout class="QVBoxLayout" name="settingsLayout">
+   <item>
+    <widget class="QLabel" name="settingsTitle">
+     <property name="text">
+      <string>Application settings</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="settingsNote">
+     <property name="text">
+      <string>Simulation only · Settings apply for this session.</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="durationLabel">
+     <property name="text">
+      <string>Default manual momentary duration (ms)</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QSpinBox" name="defaultPulse">
+     <property name="maximum">
+      <number>3600000</number>
+     </property>
+     <property name="value">
+      <number>0</number>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="timestampsCheck">
+     <property name="text">
+      <string>Show timestamps</string>
+     </property>
+     <property name="checked">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="dialogButtons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Cancel|QDialogButtonBox::Save</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>
+
+@@MOXA_END
+@@MOXA_FILE {"path": "device_panel.ui", "encoding": "utf8", "sha256": "09c1ad2867eb2f8a0f46ef6d2eabb2c1cd7b02f08c157091bad45f828b21061d"}
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>device_panel</class>
+ <widget class="QWidget" name="device_panel">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1209</width>
+    <height>460</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>800</width>
+    <height>460</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>Device controls</string>
+  </property>
+  <layout class="QVBoxLayout" name="deviceLayout">
+   <item>
+    <layout class="QHBoxLayout" name="deviceBar">
+     <item>
+      <widget class="QLabel" name="deviceName">
+       <property name="text">
+        <string>MOXA 1</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="ipCaption">
+       <property name="text">
+        <string>IP Address:</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="ipAddress">
+       <property name="text">
+        <string>169.254.10.81</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="connectionStatus">
+       <property name="text">
+        <string>● Simulated connected</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="controlColumns">
+     <item>
+      <widget class="QGroupBox" name="manualGroup">
+       <property name="title">
+        <string/>
+       </property>
+       <layout class="QGridLayout" name="manualGrid">
+        <item row="1" column="1">
+         <widget class="QFrame" name="operationFrame1">
+          <property name="frameShape">
+           <enum>QFrame::Shape::StyledPanel</enum>
+          </property>
+          <layout class="QGridLayout" name="manualColumn1">
+           <item row="0" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QLabel" name="header1">
+             <property name="text">
+              <string>Continuous</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuous1">
+             <property name="text">
+              <string>1</string>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuous2">
+             <property name="text">
+              <string>2</string>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuous3">
+             <property name="text">
+              <string>3</string>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuous4">
+             <property name="text">
+              <string>4</string>
+             </property>
+            </widget>
+           </item>
+           <item row="5" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuous5">
+             <property name="text">
+              <string>5</string>
+             </property>
+            </widget>
+           </item>
+           <item row="6" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuous6">
+             <property name="text">
+              <string>6</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item row="1" column="2">
+         <widget class="QFrame" name="operationFrame2">
+          <property name="frameShape">
+           <enum>QFrame::Shape::StyledPanel</enum>
+          </property>
+          <layout class="QGridLayout" name="manualColumn2">
+           <item row="0" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QLabel" name="header2">
+             <property name="text">
+              <string>Momentary</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QPushButton" name="pulse1">
+             <property name="text">
+              <string>1</string>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QPushButton" name="pulse2">
+             <property name="text">
+              <string>2</string>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QPushButton" name="pulse3">
+             <property name="text">
+              <string>3</string>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QPushButton" name="pulse4">
+             <property name="text">
+              <string>4</string>
+             </property>
+            </widget>
+           </item>
+           <item row="5" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QPushButton" name="pulse5">
+             <property name="text">
+              <string>5</string>
+             </property>
+            </widget>
+           </item>
+           <item row="6" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QPushButton" name="pulse6">
+             <property name="text">
+              <string>6</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item row="1" column="0">
+         <widget class="QFrame" name="operationFrame0">
+          <property name="maximumSize">
+           <size>
+            <width>180</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="frameShape">
+           <enum>QFrame::Shape::StyledPanel</enum>
+          </property>
+          <layout class="QGridLayout" name="manualColumn0">
+           <item row="0" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QLabel" name="header0">
+             <property name="text">
+              <string>Channel Name</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="0">
+            <widget class="QLineEdit" name="channelName1">
+             <property name="maximumSize">
+              <size>
+               <width>150</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Channel1</string>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="0">
+            <widget class="QLineEdit" name="channelName2">
+             <property name="maximumSize">
+              <size>
+               <width>150</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Channel2</string>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="0">
+            <widget class="QLineEdit" name="channelName3">
+             <property name="maximumSize">
+              <size>
+               <width>150</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Channel3</string>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="0">
+            <widget class="QLineEdit" name="channelName4">
+             <property name="maximumSize">
+              <size>
+               <width>150</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Channel4</string>
+             </property>
+            </widget>
+           </item>
+           <item row="5" column="0">
+            <widget class="QLineEdit" name="channelName5">
+             <property name="maximumSize">
+              <size>
+               <width>150</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Channel5</string>
+             </property>
+            </widget>
+           </item>
+           <item row="6" column="0">
+            <widget class="QLineEdit" name="channelName6">
+             <property name="maximumSize">
+              <size>
+               <width>150</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Channel6</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item row="0" column="3" colspan="2" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+         <widget class="QLabel" name="multiSelectionTitle">
+          <property name="text">
+           <string>Multi Selection</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="3">
+         <widget class="QFrame" name="operationFrame3">
+          <property name="frameShape">
+           <enum>QFrame::Shape::StyledPanel</enum>
+          </property>
+          <layout class="QGridLayout" name="manualColumn3">
+           <item row="0" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QPushButton" name="turnOnButton">
+             <property name="text">
+              <string>Turn On</string>
+             </property>
+             <property name="checkable">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuousSelect1">
+             <property name="text">
+              <string>1</string>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuousSelect2">
+             <property name="text">
+              <string>2</string>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuousSelect3">
+             <property name="text">
+              <string>3</string>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuousSelect4">
+             <property name="text">
+              <string>4</string>
+             </property>
+            </widget>
+           </item>
+           <item row="5" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuousSelect5">
+             <property name="text">
+              <string>5</string>
+             </property>
+            </widget>
+           </item>
+           <item row="6" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="continuousSelect6">
+             <property name="text">
+              <string>6</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item row="1" column="4">
+         <widget class="QFrame" name="operationFrame4">
+          <property name="frameShape">
+           <enum>QFrame::Shape::StyledPanel</enum>
+          </property>
+          <layout class="QGridLayout" name="manualColumn4">
+           <item row="0" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QPushButton" name="momentaryButton">
+             <property name="text">
+              <string>Momentary</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="momentarySelect1">
+             <property name="text">
+              <string>1</string>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="momentarySelect2">
+             <property name="text">
+              <string>2</string>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="momentarySelect3">
+             <property name="text">
+              <string>3</string>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="momentarySelect4">
+             <property name="text">
+              <string>4</string>
+             </property>
+            </widget>
+           </item>
+           <item row="5" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="momentarySelect5">
+             <property name="text">
+              <string>5</string>
+             </property>
+            </widget>
+           </item>
+           <item row="6" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+            <widget class="QCheckBox" name="momentarySelect6">
+             <property name="text">
+              <string>6</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QGroupBox" name="automationGroup">
+       <property name="title">
+        <string>Automation Configuration</string>
+       </property>
+       <layout class="QGridLayout" name="automationGrid">
+        <item row="0" column="0">
+         <widget class="QLabel" name="autoHeader0">
+          <property name="text">
+           <string>Active
+Automation</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="QLabel" name="autoHeader1">
+          <property name="text">
+           <string>First Delay
+(ms)</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="2">
+         <widget class="QLabel" name="autoHeader2">
+          <property name="text">
+           <string>Pulse
+(ms)</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="3">
+         <widget class="QLabel" name="autoHeader3">
+          <property name="text">
+           <string>Repeat</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="4">
+         <widget class="QLabel" name="autoHeader4">
+          <property name="text">
+           <string>Delay Between
+(ms)</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="5">
+         <widget class="QLabel" name="autoHeader5">
+          <property name="text">
+           <string>Digital In
+Trigger</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+         <widget class="QCheckBox" name="active1">
+          <property name="text">
+           <string>1</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="QSpinBox" name="firstDelay1">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>0</number>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="2">
+         <widget class="QSpinBox" name="pulseTime1">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="3">
+         <widget class="QSpinBox" name="repeat1">
+          <property name="maximum">
+           <number>1000</number>
+          </property>
+          <property name="value">
+           <number>3</number>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="4">
+         <widget class="QSpinBox" name="between1">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="5">
+         <widget class="QComboBox" name="trigger1">
+          <item>
+           <property name="text">
+            <string>None</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 1</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 2</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 3</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 4</string>
+           </property>
+          </item>
+         </widget>
+        </item>
+        <item row="2" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+         <widget class="QCheckBox" name="active2">
+          <property name="text">
+           <string>2</string>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="1">
+         <widget class="QSpinBox" name="firstDelay2">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>500</number>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="2">
+         <widget class="QSpinBox" name="pulseTime2">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="3">
+         <widget class="QSpinBox" name="repeat2">
+          <property name="maximum">
+           <number>1000</number>
+          </property>
+          <property name="value">
+           <number>3</number>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="4">
+         <widget class="QSpinBox" name="between2">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="5">
+         <widget class="QComboBox" name="trigger2">
+          <item>
+           <property name="text">
+            <string>None</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 1</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 2</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 3</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 4</string>
+           </property>
+          </item>
+         </widget>
+        </item>
+        <item row="3" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+         <widget class="QCheckBox" name="active3">
+          <property name="text">
+           <string>3</string>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="1">
+         <widget class="QSpinBox" name="firstDelay3">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="2">
+         <widget class="QSpinBox" name="pulseTime3">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="3">
+         <widget class="QSpinBox" name="repeat3">
+          <property name="maximum">
+           <number>1000</number>
+          </property>
+          <property name="value">
+           <number>3</number>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="4">
+         <widget class="QSpinBox" name="between3">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="5">
+         <widget class="QComboBox" name="trigger3">
+          <item>
+           <property name="text">
+            <string>None</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 1</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 2</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 3</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 4</string>
+           </property>
+          </item>
+         </widget>
+        </item>
+        <item row="4" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+         <widget class="QCheckBox" name="active4">
+          <property name="text">
+           <string>4</string>
+          </property>
+         </widget>
+        </item>
+        <item row="4" column="1">
+         <widget class="QSpinBox" name="firstDelay4">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1500</number>
+          </property>
+         </widget>
+        </item>
+        <item row="4" column="2">
+         <widget class="QSpinBox" name="pulseTime4">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="4" column="3">
+         <widget class="QSpinBox" name="repeat4">
+          <property name="maximum">
+           <number>1000</number>
+          </property>
+          <property name="value">
+           <number>3</number>
+          </property>
+         </widget>
+        </item>
+        <item row="4" column="4">
+         <widget class="QSpinBox" name="between4">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="4" column="5">
+         <widget class="QComboBox" name="trigger4">
+          <item>
+           <property name="text">
+            <string>None</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 1</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 2</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 3</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 4</string>
+           </property>
+          </item>
+         </widget>
+        </item>
+        <item row="5" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+         <widget class="QCheckBox" name="active5">
+          <property name="text">
+           <string>5</string>
+          </property>
+         </widget>
+        </item>
+        <item row="5" column="1">
+         <widget class="QSpinBox" name="firstDelay5">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>2000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="5" column="2">
+         <widget class="QSpinBox" name="pulseTime5">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="5" column="3">
+         <widget class="QSpinBox" name="repeat5">
+          <property name="maximum">
+           <number>1000</number>
+          </property>
+          <property name="value">
+           <number>3</number>
+          </property>
+         </widget>
+        </item>
+        <item row="5" column="4">
+         <widget class="QSpinBox" name="between5">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="5" column="5">
+         <widget class="QComboBox" name="trigger5">
+          <item>
+           <property name="text">
+            <string>None</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 1</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 2</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 3</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 4</string>
+           </property>
+          </item>
+         </widget>
+        </item>
+        <item row="6" column="0" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
+         <widget class="QCheckBox" name="active6">
+          <property name="text">
+           <string>6</string>
+          </property>
+         </widget>
+        </item>
+        <item row="6" column="1">
+         <widget class="QSpinBox" name="firstDelay6">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>2500</number>
+          </property>
+         </widget>
+        </item>
+        <item row="6" column="2">
+         <widget class="QSpinBox" name="pulseTime6">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="6" column="3">
+         <widget class="QSpinBox" name="repeat6">
+          <property name="maximum">
+           <number>1000</number>
+          </property>
+          <property name="value">
+           <number>3</number>
+          </property>
+         </widget>
+        </item>
+        <item row="6" column="4">
+         <widget class="QSpinBox" name="between6">
+          <property name="maximum">
+           <number>3600000</number>
+          </property>
+          <property name="value">
+           <number>1000</number>
+          </property>
+         </widget>
+        </item>
+        <item row="6" column="5">
+         <widget class="QComboBox" name="trigger6">
+          <item>
+           <property name="text">
+            <string>None</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 1</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 2</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 3</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DI 4</string>
+           </property>
+          </item>
+         </widget>
+        </item>
+        <item row="7" column="0" colspan="2">
+         <widget class="QPushButton" name="runSelectedButton">
+          <property name="text">
+           <string>Run Selected</string>
+          </property>
+         </widget>
+        </item>
+        <item row="7" column="2">
+         <widget class="QPushButton" name="stopButton">
+          <property name="text">
+           <string>Stop</string>
+          </property>
+         </widget>
+        </item>
+        <item row="7" column="3" colspan="3">
+         <widget class="QPushButton" name="triggerButton">
+          <property name="text">
+           <string>Simulate D/I</string>
+          </property>
+         </widget>
+        </item>
+        <item row="8" column="0" colspan="6">
+         <widget class="QLabel" name="automationStatus">
+          <property name="text">
+           <string>Ready · Repeat is the number of pulses.</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
+
+@@MOXA_END
+@@MOXA_FILE {"path": "style.qss", "encoding": "utf8", "sha256": "8488bbab2af1b0acdbe133acab4b156aab3f584c9b2d90eedafdff0794c18f9e"}
+
+QWidget { font-family: "Segoe UI"; font-size: 10pt; color: #20314b; }
+QMainWindow, QDialog { background: #f3f6fa; }
+QLabel#brandLabel { font-size: 18pt; font-weight: 700; color: #14355c; padding: 2px; }
+QLabel#simulationLabel { color: #53708c; padding: 10px; }
+QLabel#homeTitle, QLabel#automationTitle, QLabel#manageTitle, QLabel#settingsTitle { font-size: 18pt; font-weight: 600; padding: 8px 0; }
+QTabWidget::pane { border: 1px solid #d8e1ec; background: white; border-radius: 6px; }
+QTabBar::tab { padding: 11px 26px; background: #e7edf4; }
+QTabBar::tab:selected { background: white; color: #1267b2; }
+QGroupBox { font-weight: 600; border: 1px solid #d8e1ec; border-radius: 6px; margin-top: 18px; padding: 18px 12px 12px; }
+QGroupBox::title { subcontrol-origin: margin; left: 12px; }
+QPushButton { min-height: 20px; background: #eaf0f7; border: 1px solid #ccd8e6; border-radius: 5px; padding: 8px 14px; }
+QPushButton:hover { background: #dbe9f8; }
+QPushButton:pressed { background: #cbdff3; }
+QPushButton#turnOnButton, QPushButton#momentaryButton, QPushButton#askPromptButton { background: #1668b2; color: white; border-color: #1668b2; }
+QPushButton#turnOnButton:checked { background: #084975; color: white; border: 1px inset #063451; }
+QPushButton#turnOnButton:checked:hover { background: #0b5689; }
+QPushButton:disabled { background: #edf0f4; color: #8e98a6; }
+QLineEdit, QComboBox { min-height: 20px; }
+QLineEdit, QComboBox, QPlainTextEdit { background: white; border: 1px solid #cdd8e5; border-radius: 4px; padding: 7px; }
+QLabel[relayOn="true"] { color: #07805d; font-weight: 700; }
+QLabel#multiSelectionTitle { color: #64758b; qproperty-alignment: AlignCenter; padding: 5px; }
+QHeaderView::section { background: #eaf0f7; border: 0; padding: 10px; font-weight: 600; }
+QTableWidget { border: 1px solid #d8e1ec; gridline-color: #e4ebf2; background: white; }
+QCheckBox { spacing: 7px; padding: 5px; }
+
+QSpinBox { min-height: 22px; padding: 4px 22px 4px 4px; border: 1px solid #cdd8e5; border-radius: 4px; background: white; }
+QSpinBox::up-button { subcontrol-origin: border; subcontrol-position: top right; width: 19px; background: #eaf0f7; border-left: 1px solid #ccd8e6; border-bottom: 1px solid #ccd8e6; border-top-right-radius: 4px; }
+QSpinBox::down-button { subcontrol-origin: border; subcontrol-position: bottom right; width: 19px; background: #eaf0f7; border-left: 1px solid #ccd8e6; border-bottom-right-radius: 4px; }
+QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: #cbdff3; }
+QSpinBox::up-arrow { image: url("__ASSET_ROOT__/spin-plus.svg"); width: 10px; height: 10px; }
+QSpinBox::down-arrow { image: url("__ASSET_ROOT__/spin-minus.svg"); width: 10px; height: 10px; }
+QGroupBox { font-size: 11pt; }
+QLabel#deviceName { font-weight: 700; font-size: 12pt; }
+QScrollArea { border: 0; }
+
+QFrame[frameShape="6"] { border: 1px solid #ccd8e6; border-radius: 4px; background: #f8fafd; }
+QPushButton#turnOnButton, QPushButton#momentaryButton { min-width: 76px; max-width: 76px; padding: 7px 6px; }
+QGroupBox#manualGroup { padding: 2px 6px 8px; margin-top: 0px; }
+QGroupBox#manualGroup QLabel { font-size: 9pt; }
+QGroupBox#manualGroup QLineEdit { min-width: 100px; max-width: 150px; }
+
+QGroupBox#manualGroup { max-width: 660px; }
+QWidget#deviceCard { background: white; border: 1px solid #c4d4e6; border-top: 4px solid #1668b2; border-radius: 8px; }
+QWidget#deviceCard QLabel#deviceName { background: #eaf2fc; color: #14355c; padding: 8px 12px; border-radius: 4px; }
+QWidget#deviceCard QLabel#deviceName { font-size: 11pt; padding: 5px 9px; }
+QWidget#deviceCard QLabel#connectionStatus { font-size: 9pt; color: #53708c; padding-left: 12px; border-left: 1px solid #d8e1ec; }
+QComboBox#ipSelector { padding: 4px 8px; min-height: 22px; combobox-popup: 0; }
+QComboBox#ipSelector QAbstractItemView::item { min-height: 28px; padding: 2px 6px; }
+QLineEdit#deviceNameEdit { background: #eaf2fc; color: #14355c; font-size: 11pt; font-weight: 700; padding: 5px 9px; border: 1px solid #c4d4e6; }
+QLineEdit#deviceNameEdit:focus { background: white; border: 1px solid #1668b2; }
+QGroupBox#manualGroup QLabel#multiSelectionTitle { padding: 0px; }
+QGroupBox#automationGroup { margin-top: 0px; }
+QGroupBox#automationGroup::title { subcontrol-origin: border; subcontrol-position: top center; padding: 0 8px; top: 0px; background: white; }
+QFrame#automationRowSeparator { background: #d8e1ec; border: none; }
+QPushButton#navigationButton { padding: 7px 12px; }
+QPushButton#navigationButton:checked { background: #1668b2; color: white; }
+QLabel#automationHeading { font-size: 11pt; font-weight: 600; }
+QPushButton#compactRunButton { min-height: 18px; padding: 3px 8px; }
+QPushButton#compactRunButton { background: #dff2e8; color: #17613e; border-color: #abd5be; }
+QPushButton#compactStopButton { min-height: 18px; padding: 3px 8px; background: #fbe5e5; color: #933232; border-color: #e4b5b5; }
+QFrame#automationRowEven { background: #eaf2fc; border: none; border-radius: 4px; }
+QFrame#automationRowOdd { background: #f5f8fc; border: none; border-radius: 4px; }
+QTableWidget { gridline-color: #bacbdf; alternate-background-color: #edf3fa; selection-background-color: #cddff4; selection-color: #14355c; }
+QPushButton#collapseButton { min-width: 0px; min-height: 0px; padding: 0px; border: none; border-radius: 7px; background: #edf4fc; }
+QPushButton#collapseButton:hover { background: #d6e7fa; }
+QPushButton#collapseButton:pressed { background: #bdd8f5; }
+QGroupBox#manualGroup QLineEdit { min-height: 18px; padding: 3px 7px; }
+QGroupBox#manualGroup QCheckBox, QGroupBox#automationGroup QCheckBox { padding: 2px; }
+QGroupBox#manualGroup QPushButton { min-height: 18px; padding-top: 3px; padding-bottom: 3px; }
+QGroupBox#automationGroup QSpinBox { min-height: 18px; padding-top: 2px; padding-bottom: 2px; }
+QGroupBox#automationGroup QComboBox { min-height: 18px; padding-top: 3px; padding-bottom: 3px; }
+QGroupBox#automationGroup QComboBox[compactDI="true"] { min-height: 16px; padding: 1px 4px; }
+QComboBox[compactDI="true"] { combobox-popup: 0; }
+QComboBox[compactDI="true"] QAbstractItemView { min-height: 60px; padding: 2px; }
+QComboBox[compactDI="true"] QAbstractItemView::item { min-height: 26px; padding: 2px 6px; }
+QLabel#manageTitle, QLabel#settingsTitle { font-size: 15pt; margin: 0px; padding: 2px 0px; }
+QTableWidget#deviceTable QHeaderView::section { padding: 6px 8px; }
+QFrame#confirmationSection { background: #f3f6fa; border: 1px solid #d8e1ec; border-radius: 6px; }
+QFrame#confirmationSection QLabel, QFrame#confirmationSection QCheckBox { border: none; }
+QPushButton#automationPresetsButton { font-size: 9pt; min-height: 0px; padding: 1px 6px; }
+QPushButton[compactManage="true"] { min-height: 18px; padding: 4px 10px; }
+QLabel#connectionStatus[communicationState="connected"] { color: #16835c; }
+QLabel#connectionStatus[communicationState="connecting"], QLabel#connectionStatus[communicationState="stale"] { color: #b56b12; }
+QLabel#connectionStatus[communicationState="error"] { color: #bd3838; }
+QPushButton#modeButton { background: #e3effb; color: #1668b2; font-weight: 600; padding: 5px 10px; }
+QPushButton#modeButton[live="true"] { background: #fff0d9; color: #925706; border-color: #dba551; }
+
+@@MOXA_END
+@@MOXA_FILE {"path": "assets/chevron-down.svg", "encoding": "utf8", "sha256": "0ab261f6bac72720909c9f7ab71b18785e688a03bd0bcf20eecf402a8f6b3138"}
+<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18"><path d="m4 7 5 5 5-5" fill="none" stroke="#1668b2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+
+@@MOXA_END
+@@MOXA_FILE {"path": "assets/chevron-right.svg", "encoding": "utf8", "sha256": "bd23f2868abea7a7e8dd45cd018288e44bf5513eed9d77d9431b93b9a7ad9a71"}
+<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18"><path d="m7 4 5 5-5 5" fill="none" stroke="#1668b2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+
+@@MOXA_END
+@@MOXA_FILE {"path": "assets/spin-minus.svg", "encoding": "utf8", "sha256": "9ea9361d0945eb2af5b4180d6acf6d4b412d0f6f5f4d10256ba1b41dc4d6539b"}
+<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"><path d="M2 6h8" fill="none" stroke="#14355c" stroke-width="2" stroke-linecap="round"/></svg>
+
+@@MOXA_END
+@@MOXA_FILE {"path": "assets/spin-plus.svg", "encoding": "utf8", "sha256": "d935d84f582b18c811cb735ac8eeac4787384130db0eb4b721317124940de083"}
+<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"><path d="M2 6h8M6 2v8" fill="none" stroke="#14355c" stroke-width="2" stroke-linecap="round"/></svg>
+
+@@MOXA_END

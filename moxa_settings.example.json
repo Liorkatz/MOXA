@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "devices": [],
+  "pulse": 0,
+  "timestamps": true,
+  "scenarios": {},
+  "default_mode": "simulation",
+  "confirm_actions": false,
+  "auto_pulse_preview": false,
+  "countdown": {"enabled": false, "seconds": 3}
+}

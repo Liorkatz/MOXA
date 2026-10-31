@@ -1,0 +1,69 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ui version="4.0">
+ <class>home</class>
+ <widget class="QWidget" name="home">
+  <property name="windowTitle">
+   <string>Home</string>
+  </property>
+  <layout class="QVBoxLayout" name="homeLayout">
+   <item>
+    <layout class="QHBoxLayout" name="toolbar">
+     <item>
+      <widget class="QCheckBox" name="showAutomation">
+       <property name="text">
+        <string>Show Automation</string>
+       </property>
+       <property name="checked">
+        <bool>false</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="askConfirm">
+       <property name="text">
+        <string>Ask Prompt</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="runBothButton">
+       <property name="text">
+        <string>Run / Stop Both</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QScrollArea" name="devicesScroll">
+     <property name="widgetResizable">
+      <bool>true</bool>
+     </property>
+     <widget class="QWidget" name="devicesScrollContents">
+      <layout class="QVBoxLayout" name="devicesScrollLayout" />
+     </widget>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="promptLayout">
+     <item>
+      <widget class="QLineEdit" name="promptInput">
+       <property name="placeholderText">
+        <string>Local demo prompt: status or help</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="askPromptButton">
+       <property name="text">
+        <string>Ask Prompt</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>
