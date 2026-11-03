@@ -19,6 +19,8 @@ File → Save, Save As and Open handle one JSON configuration containing unit co
 - LIVE requires an explicit Connect and hides simulation controls. Simulation does not send hardware commands.
 - Each channel can select None or its corresponding DI only. Simulation uses one button per input. START/OFF affect the channel, PAUSE/CONTINUE affect the unit, RESET affects all units and restores their pre-run Continuous states.
 - PAUSE holds output states. RESET cancels jobs and restores the saved Continuous baseline. Unit header lamps blink green while running and stay amber while paused.
+- Queued automation writes wait during PAUSE and are resumed once on CONTINUE; phase timers start after acknowledgement. A hardware request already transmitted before PAUSE cannot be recalled. RESET preserves idle units' current Continuous states when they have no automation baseline.
+- Configuration files are fully validated before replacing the current document. Runtime connection/job fields are never imported. Manual selection changes and card collapse preferences participate in autosave.
 - Polling runs every 250 ms. Short DI pulses may be missed; cross-unit timing is not deterministic.
 
 The direct Modbus backend supports E1214 default mapping only. Password authentication uses the official DLL in `vendor/`. Communication failure cancels local jobs but cannot guarantee a disconnected unit's physical output state.

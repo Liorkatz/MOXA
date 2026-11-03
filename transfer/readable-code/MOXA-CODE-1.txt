@@ -1,4 +1,4 @@
-@@MOXA_FILE {"path": "main.py", "encoding": "utf8", "sha256": "c94474ef8d384278a433f1e6cfe8df105036e8defdedc25cd7dbe90ad352655d"}
+@@MOXA_FILE {"path": "main.py", "encoding": "utf8", "sha256": "ce218ee41996e43952d1d7248b72b025f230bac40c3fc64f8d7df52a3c3d9bae"}
 """MOXA Control — GUI simulator. No network or physical device access."""
 from pathlib import Path
 from datetime import datetime
@@ -323,7 +323,7 @@ class Controller:
         resetPolicy.setRetainSizeWhenHidden(False)
         self.resetBothButton.setSizePolicy(resetPolicy)
         self.resetBothButton.hide()
-        self.resetBothButton.clicked.connect(lambda: [self.stop_device(d) for d in self.devices])
+        self.resetBothButton.clicked.connect(self.reset_all_devices)
         toolbar.addWidget(self.resetBothButton)
         self.home.runBothButton.setVisible(self.home.showAutomation.isChecked())
         toolbar.insertStretch(5, 1)
@@ -594,45 +594,24 @@ class Controller:
         if not Path(self.config_path).exists(): return False
         try:
             data = config_store.load(self.config_path)
-            devices, ips, names, ids = [],set(),set(),set()
+            devices = []
             for record in data['devices']:
-                uid = record['uid']
-                if type(uid) is not int or not 1 <= uid <= 5 or uid in ids: raise ValueError('Invalid unit ID')
-                record['ip'] = str(IPv4Address(record['ip']))
-                if record['ip'] in ips or not record['name'].strip() or record['name'].casefold() in names: raise ValueError('Duplicate saved unit')
-                if record['mode'] not in ('real','simulation') or not 1 <= record['port'] <= 65535 or not 1 <= record['timeout'] <= 60000: raise ValueError('Invalid connection settings')
-                if len(record['config']) != 6 or len(record['names']) != 6: raise ValueError('Invalid channels')
-                record.pop('di_rules', None)
-                for cfg in record['config']:
-                    if cfg.get('action','start') not in ('start','off','pause','continue','reset'): raise ValueError('Invalid DI action')
-                    for key in ('first','pulse','between'):
-                        if type(cfg[key]) is not int or not 0 <= cfg[key] <= 3600000: raise ValueError('Invalid timing')
-                    if not 0 <= cfg['repeat'] <= 1000 or not 0 <= cfg['trigger'] <= 6: raise ValueError('Invalid automation')
-                d = self.new_device(uid)
+                d = self.new_device(record['uid'])
                 d.update(record,connected=record['mode']=='simulation')
-                continuous = record.get('continuous_states', [False]*6)
-                if not isinstance(continuous,list) or len(continuous)!=6 or any(type(v) is not bool for v in continuous): raise ValueError('Invalid Continuous states')
-                d['states'] = list(continuous)
+                d['states'] = list(record['continuous_states'])
                 devices.append(d)
-                ids.add(uid); ips.add(record['ip']); names.add(record['name'].casefold())
-            default_mode = data.get('default_mode', 'real' if devices and all(d['mode']=='real' for d in devices) else 'simulation')
-            if default_mode not in ('real', 'simulation'): default_mode = 'simulation'
-            scenarios = data.get('scenarios',{})
-            if not isinstance(scenarios,dict): raise ValueError('Invalid saved scenarios')
-            timestamps = bool(data['timestamps'])
-            countdown = data.get('countdown', {'enabled':False,'seconds':3})
-            if not isinstance(countdown,dict) or type(countdown.get('enabled')) is not bool or type(countdown.get('seconds')) is not int or not 1<=countdown['seconds']<=120:
-                raise ValueError('Invalid countdown settings')
+            # Parsing/validation finishes before replacing the current document.
             self.devices = devices
-            self.default_mode = default_mode
-            self.scenarios = scenarios
+            self.default_mode = data['default_mode']
+            self.scenarios = data['scenarios']
             self.default_pulse = 0
-            self.timestamps = timestamps
-            self.home.askConfirm.setChecked(bool(data.get('confirm_actions', False)))
-            self.autoPulsePreview.setChecked(bool(data.get('auto_pulse_preview', False)))
-            self.countdownEnabled.setChecked(countdown['enabled'])
-            self.countdownSeconds.setValue(countdown['seconds'])
+            self.timestamps = data['timestamps']
+            self.home.askConfirm.setChecked(data['confirm_actions'])
+            self.autoPulsePreview.setChecked(data['auto_pulse_preview'])
+            self.countdownEnabled.setChecked(data['countdown']['enabled'])
+            self.countdownSeconds.setValue(data['countdown']['seconds'])
             self.reset_input = {'ip': '', 'channel': 1}  # Legacy override removed; use per-row RESET all.
+            self.config_load_failed = False
             return True
         except Exception as exc:
             self.config_load_failed = True
@@ -940,7 +919,8 @@ class Controller:
             trigger.view().setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             trigger.view().setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             trigger.view().setMinimumHeight(60)
-            getattr(p,f'continuousSelect{n}').toggled.connect(self.render)
+            for prefix in ('continuousSelect','momentarySelect'):
+                getattr(p,f'{prefix}{n}').toggled.connect(lambda _,d=d,p=p: self.manual_selection_changed(d,p))
             getattr(p,f'channelName{n}').editingFinished.connect(lambda d=d,p=p,i=i: self.rename(d,p,i))
             getattr(p,f'continuous{n}').toggled.connect(lambda value,d=d,i=i: self.manual(d,i,value))
             getattr(p,f'pulse{n}').clicked.connect(lambda d=d,i=i: self.pulse(d,i))
@@ -953,6 +933,19 @@ class Controller:
         d['collapsed'] = not d.get('collapsed', False)
         self.apply_collapse(p,d)
         self.fitTimer.start(30)
+        self.configuration_changed()
+
+    def configuration_changed(self):
+        if self.saveTimer is not None:
+            self.saveTimer.start(400)
+        else:
+            self.saveStatus.setText('Not saved')
+
+    def manual_selection_changed(self,d,p):
+        d['manual_selection'] = {prefix: [getattr(p,f'{prefix}{i}').isChecked() for i in range(1,7)]
+                                 for prefix in ('continuousSelect','momentarySelect')}
+        self.configuration_changed()
+        self.render()
 
     def apply_collapse(self,p,d):
         p.collapsed = d.get('collapsed', False)
@@ -975,12 +968,12 @@ class Controller:
         return False
 
     def global_input_reset(self):
-        self.cancel_countdown()
-        for d in self.devices:
-            # Units that never ran automation keep their current Continuous state.
-            d.setdefault('baseline', list(d['states']))
-            self.stop_device(d)
+        self.reset_all_devices()
         self.log(f'Global RESET: {self.reset_input["ip"]} / DI {self.reset_input["channel"]}; all automation cancelled and initial Continuous states requested.')
+
+    def reset_all_devices(self):
+        self.cancel_countdown()
+        for d in self.devices: self.stop_device(d)
 
     def handle_input_sample(self, d, inputs):
         previous = d.get('inputs', [False] * 6)
@@ -1181,7 +1174,7 @@ class Controller:
             self.combinedRunButton.setProperty('compactManage', True)
             self.combinedResetButton.setProperty('compactManage', True)
             self.combinedRunButton.clicked.connect(self.run_both)
-            self.combinedResetButton.clicked.connect(lambda: [self.stop_device(d) for d in self.devices])
+            self.combinedResetButton.clicked.connect(self.reset_all_devices)
             actions.addWidget(self.combinedRunButton)
             actions.addWidget(self.combinedResetButton)
             actions.addStretch()
@@ -1451,7 +1444,15 @@ class Controller:
             job['started'] += now - job.pop('paused')
             saved_state = job.pop('relay_state')
             if d.get('mode') != 'real': d['states'][i] = saved_state
-            job['timer'].start(job.pop('remaining_ms'))
+            remaining = job.pop('remaining_ms')
+            pending = job.get('pending_write')
+            if pending:
+                if job.pop('write_deferred', False):
+                    value, acknowledged = pending
+                    self.request_job_output(d,i,job,value,acknowledged)
+                # Queued/in-flight writes keep ownership of arming the timer.
+            else:
+                job['timer'].start(remaining)
         self.render()
 
     def cancel(self,d,i):
@@ -1507,7 +1508,7 @@ class Controller:
                         self.hardware_error(d,error)
                 self.hardware.submit(d['uid'],lambda client=client:(client.bits(1),client.bits(2)),success,failure)
 
-    def set_output(self,d,i,value,done=None):
+    def set_output(self,d,i,value,done=None,job=None):
         if d.get('mode') != 'real':
             d['states'][i] = bool(value)
             if done: done()
@@ -1519,13 +1520,25 @@ class Controller:
         version = self.output_versions.get(key,0) + 1
         self.output_versions[key] = version
         def success(states):
-            if states is None or self.output_versions.get(key) != version or self.clients.get(d['uid']) is not client: return
+            if self.output_versions.get(key) != version or self.clients.get(d['uid']) is not client: return
+            if states is None:
+                # PAUSE can be released between the worker's pause check and
+                # its deferred-result callback. Resume that transition here.
+                if job is not None and self.jobs.get(key) is job and not job.get('paused') and job.get('write_deferred'):
+                    pending = job.get('pending_write')
+                    if pending: self.request_job_output(d,i,job,*pending)
+                return
             d['states'] = states
             if done: done()
             self.render()
         def operation():
             if getattr(client,'failed',False) or self.output_versions.get(key) != version or self.clients.get(d['uid']) is not client:
                 return None
+            if job is not None:
+                if self.jobs.get(key) is not job: return None
+                if job.get('paused'):
+                    job['write_deferred'] = True
+                    return None
             try:
                 return client.write(i,bool(value))
             except Exception:
@@ -1535,6 +1548,19 @@ class Controller:
             if self.clients.get(d['uid']) is client:
                 self.hardware_error(d,error)
         self.hardware.submit(d['uid'], operation, success, failure)
+
+    def request_job_output(self,d,i,job,value,acknowledged):
+        """Retain a queued automation transition through PAUSE, until acknowledged."""
+        if self.jobs.get((d['uid'],i)) is not job: return
+        job['pending_write'] = (bool(value), acknowledged)
+        job['write_deferred'] = False
+        def complete():
+            if self.jobs.get((d['uid'],i)) is not job: return
+            job.pop('pending_write',None)
+            job.pop('write_deferred',None)
+            if job.get('paused'): job['relay_state'] = d['states'][i]
+            acknowledged()
+        self.set_output(d,i,value,complete,job=job)
 
     def schedule(self,d,i,config):
         self.cancel(d,i)
@@ -1547,7 +1573,7 @@ class Controller:
             self.autoPulseTimer.start(0)
         timer.timeout.connect(lambda: self.job_step(d,i,job))
         job['pending_ms'] = config['first']
-        self.set_output(d,i,False,lambda: self.arm_job(d,i,job,config['first']))
+        self.request_job_output(d,i,job,False,lambda: self.arm_job(d,i,job,config['first']))
         self.log(f'{d["name"]} / {d["names"][i]} scheduled: {config["repeat"]} pulse(s).')
         self.render()
 
@@ -1560,12 +1586,12 @@ class Controller:
             job['timer'].start(duration)
 
     def job_step(self,d,i,job):
-        if self.jobs.get((d['uid'],i)) is not job: return
+        if self.jobs.get((d['uid'],i)) is not job or job.get('paused'): return
         cfg=job['config']
         if job['phase']=='on':
             job['phase']='off'
             job['pending_ms'] = max(1,cfg['pulse'])
-            self.set_output(d,i,True,lambda: self.arm_job(d,i,job,max(1,cfg['pulse'])))
+            self.request_job_output(d,i,job,True,lambda: self.arm_job(d,i,job,max(1,cfg['pulse'])))
             self.log(f'{d["name"]} / {d["names"][i]} pulse ON requested')
         else:
             job['pending_ms'] = cfg['between']
@@ -1578,7 +1604,7 @@ class Controller:
                     job['phase']='on'
                     self.arm_job(d,i,job,cfg['between'])
                 self.render()
-            self.set_output(d,i,False,off_done)
+            self.request_job_output(d,i,job,False,off_done)
         self.render()
 
     def run_selected(self,d,triggered=False,all_channels=False):
@@ -1613,7 +1639,7 @@ class Controller:
         self.cancel_countdown()
         d.pop('_clock_started',None)
         d.pop('_clock_paused',None)
-        baseline = d.pop('baseline', [False]*6)
+        baseline = d.pop('baseline', list(d['states']))
         for i in range(6):
             self.cancel(d,i)
             self.set_output(d,i,baseline[i])
