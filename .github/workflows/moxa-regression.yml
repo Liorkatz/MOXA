@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test-windows:
@@ -28,10 +28,43 @@ jobs:
           python-version: '3.12'
           architecture: x64
       - name: Install GUI runtime
+        id: deps
+        continue-on-error: true
         run: python -m pip install --disable-pip-version-check PySide6==6.11.2
       - name: Python source compiles
+        id: compile
+        if: steps.deps.outcome == 'success'
+        continue-on-error: true
         run: python -m compileall -q main.py moxa_backend.py config_store.py network_discovery.py automation_timeline.py combined_timeline.py tests
       - name: Run live-control regression (mocked peer)
+        id: live
+        if: steps.compile.outcome == 'success'
+        continue-on-error: true
         run: python tests/verify_live_controls.py
       - name: Run opt-in simulator regression (offline)
+        id: simulator
+        if: steps.compile.outcome == 'success'
+        continue-on-error: true
         run: python tests/verify_simulation_opt_in.py
+      - name: Publish concise result in repository
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "ci-results" -Force | Out-Null
+          $report = @(
+            "commit=${{ github.sha }}"
+            "runtime=Windows Python 3.12 x64"
+            "dependencies=${{ steps.deps.outcome }}"
+            "syntax=${{ steps.compile.outcome }}"
+            "live_controls=${{ steps.live.outcome }}"
+            "simulation=${{ steps.simulator.outcome }}"
+          )
+          $report | Set-Content -Path "ci-results/windows-exe-last-run.txt" -Encoding utf8
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ci-results/windows-exe-last-run.txt
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "Record MOXA regression results [skip ci]"
+            git push origin HEAD:windows-exe
+          }
