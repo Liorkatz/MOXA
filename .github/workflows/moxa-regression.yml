@@ -13,6 +13,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: moxa-regression-windows-exe
+  cancel-in-progress: true
+
 jobs:
   test-windows:
     runs-on: windows-latest
@@ -40,12 +44,24 @@ jobs:
         id: live
         if: steps.compile.outcome == 'success'
         continue-on-error: true
-        run: python tests/verify_live_controls.py
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "ci-results" -Force | Out-Null
+          python tests/verify_live_controls.py *> "ci-results/live-controls.log"
+          $result = $LASTEXITCODE
+          Get-Content "ci-results/live-controls.log"
+          exit $result
       - name: Run opt-in simulator regression (offline)
         id: simulator
         if: steps.compile.outcome == 'success'
         continue-on-error: true
-        run: python tests/verify_simulation_opt_in.py
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "ci-results" -Force | Out-Null
+          python tests/verify_simulation_opt_in.py *> "ci-results/simulation.log"
+          $result = $LASTEXITCODE
+          Get-Content "ci-results/simulation.log"
+          exit $result
       - name: Publish concise result in repository
         if: always()
         shell: pwsh
@@ -62,9 +78,11 @@ jobs:
           $report | Set-Content -Path "ci-results/windows-exe-last-run.txt" -Encoding utf8
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ci-results/windows-exe-last-run.txt
+          git add ci-results
           git diff --cached --quiet
           if ($LASTEXITCODE -ne 0) {
             git commit -m "Record MOXA regression results [skip ci]"
+            git fetch origin windows-exe
+            git rebase origin/windows-exe
             git push origin HEAD:windows-exe
           }
