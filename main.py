@@ -1282,7 +1282,6 @@ class Controller:
         indices = [i for i in range(6) if getattr(p,f'continuousSelect{i+1}').isChecked()]
         value = not (bool(indices) and all(d['states'][i] for i in indices))
         self.selected(d,p,False,value)
-        self.render()
 
     def selected(self,d,p,momentary,value=True):
         if not self.confirm(): return
@@ -1290,7 +1289,10 @@ class Controller:
         indices=[i for i in range(6) if getattr(p,f'{prefix}{i+1}').isChecked()]
         if not indices: self.log('Select relay checkboxes below the header action first.')
         for i in indices:
-            self.manual(d,i,value)
+            self.manual(d,i,value,update=False)
+        if indices:
+            self.flush_outputs()
+            self.render()
 
     def begin_run(self, callback):
         if self.countdownDialog is not None: return
@@ -1402,13 +1404,13 @@ class Controller:
             job['timer'].stop()
             job['timer'].deleteLater()
 
-    def manual(self,d,i,value):
+    def manual(self,d,i,value,update=True):
         if not d['connected']: return
         self.cancel(d,i)
         self.set_output(d,i,value)
         if 'baseline' in d: d['baseline'][i] = bool(value)
         self.log(f'{d["name"]} / {d["names"][i]} requested {"ON" if value else "OFF"} ({d.get("mode","real")})')
-        self.render()
+        if update: self.render()
 
     def bind_momentary(self, button, d, indices):
         button.setAutoRepeat(False)
@@ -1424,13 +1426,18 @@ class Controller:
         indices = tuple(indices)
         if not indices: return
         self.held_momentary[button] = (d, indices)
-        for i in indices: self.manual(d, i, True)
+        for i in indices: self.manual(d, i, True, update=False)
+        # Queue the whole ON batch immediately, before the mouse is released.
+        self.flush_outputs()
+        self.render()
 
     def release_momentary(self, button):
         held = self.held_momentary.pop(button, None)
         if held:
             d, indices = held
-            for i in indices: self.manual(d, i, False)
+            for i in indices: self.manual(d, i, False, update=False)
+            self.flush_outputs()
+            self.render()
 
     def release_all_momentary(self):
         for button in list(self.held_momentary): self.release_momentary(button)
