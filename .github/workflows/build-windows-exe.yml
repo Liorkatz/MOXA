@@ -16,7 +16,7 @@ jobs:
           python-version: '3.12.10'
           architecture: x64
       - run: python -m pip install -r requirements.txt pyinstaller
-      - run: python -m PyInstaller --noconfirm --clean MOXA.spec
+      - run: python -m PyInstaller --noconfirm --clean MOXA-folder.spec
       - name: Verify bundled files
         shell: pwsh
         run: |
@@ -71,7 +71,7 @@ jobs:
           architecture: x64
       - run: python -m pip install -r requirements.txt pyinstaller
       - name: Build the standalone EXE
-        run: python -m PyInstaller --noconfirm --clean --distpath portable-dist --workpath portable-build MOXA-onefile.spec
+        run: python -m PyInstaller --noconfirm --clean --distpath portable-dist --workpath portable-build MOXA.spec
       - name: Verify standalone EXE after moving it to another drive letter
         shell: pwsh
         run: |

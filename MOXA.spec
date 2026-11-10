@@ -14,14 +14,9 @@ archive = PYZ(analysis.pure)
 executable = EXE(
     archive,
     analysis.scripts,
-    [],
-    exclude_binaries=True,
-    name="MOXA",
-    console=False,
-)
-bundle = COLLECT(
-    executable,
     analysis.binaries,
     analysis.datas,
-    name="MOXA",
+    [],
+    name="MOXA-Portable",
+    console=False,
 )
