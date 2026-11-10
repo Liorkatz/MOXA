@@ -54,6 +54,11 @@ peer.requests.clear()
 client.write_many({2: True})
 assert [f for f, _ in peer.requests] == [5, 1]
 peer.requests.clear()
+client.write_many({0: True, 2: False, 5: True})
+assert peer.states == [True, True, False, False, True, True]
+assert [f for f, _ in peer.requests] == [1, 15, 1]
+assert struct.unpack('>HHBB', peer.requests[1][1]) == (0, 6, 1, 0b110011)
+peer.requests.clear()
 for flag in ('bad_ack', 'bad_read'):
     setattr(peer, flag, True)
     try:
@@ -85,6 +90,9 @@ with patch.object(auth, 'sdk', return_value=sdk):
     auth.write_many({0: False, 2: False})
     assert sdk.states == [False, True, False, True, True, True]
     assert sdk.writes[-1] == (0, 3, 0b010), 'One SDK write must keep skipped channel 1 ON'
+    auth.write_many({0: True, 3: False, 5: True})
+    assert sdk.states == [True, True, False, False, True, True]
+    assert sdk.writes[-1] == (0, 6, 0b110011), 'Mixed ON/OFF changes must use one SDK write'
 
 
 class TestClient:
