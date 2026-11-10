@@ -2,7 +2,7 @@
 import socket
 import struct
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from ipaddress import IPv4Network
+from ipaddress import IPv4Address, IPv4Network
 from PySide6.QtCore import QThread, Signal, Qt
 from PySide6.QtNetwork import QNetworkInterface
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
@@ -94,7 +94,7 @@ class DiscoveryDialog(QDialog):
         self.resize(790, 470)
         self.devices, self.results, self.worker = devices, {}, None
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel('Enter an IP address · scan its local 256-address range (read-only)'))
+        layout.addWidget(QLabel('Enter an IPv4 address only · scan its local range (read-only)'))
         row = QHBoxLayout()
         self.network = QComboBox()
         self.network.setEditable(True)
@@ -165,8 +165,8 @@ class DiscoveryDialog(QDialog):
 
     def start_scan(self):
         try:
-            address = self.network.currentText().strip()
-            network = IPv4Network(address if '/' in address else address + '/24', strict=False)
+            address = str(IPv4Address(self.network.currentText().strip()))
+            network = IPv4Network(address + '/24', strict=False)
             if network.num_addresses > 256 or network.is_multicast or network.is_unspecified:
                 raise ValueError()
         except ValueError:
