@@ -60,3 +60,34 @@ jobs:
           name: MOXA-Windows-x64
           path: dist/
           if-no-files-found: error
+      - name: Build the standalone EXE
+        run: python -m PyInstaller --noconfirm --clean --distpath portable-dist --workpath portable-build MOXA-onefile.spec
+      - name: Verify standalone EXE after moving it to another drive letter
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path portable-dist/MOXA-Portable.exe).Path
+          $entries = & pyi-archive_viewer -l $exe
+          if ($LASTEXITCODE -ne 0 -or !($entries -match 'vendor[\\/]MXIO.dll')) {
+            throw 'Missing MXIO.dll in standalone package'
+          }
+
+          $target = Join-Path $env:RUNNER_TEMP 'MOXA transfer test'
+          New-Item -ItemType Directory -Path $target | Out-Null
+          Copy-Item $exe -Destination $target
+          subst M: $target
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to map test drive' }
+          try {
+            $app = Start-Process 'M:\MOXA-Portable.exe' -ArgumentList '--smoke-test' -WorkingDirectory $env:RUNNER_TEMP -PassThru
+            if (!$app.WaitForExit(60000)) {
+              $app.Kill($true)
+              throw 'Standalone EXE smoke test timed out'
+            }
+            if ($app.ExitCode -ne 0) { throw "Standalone EXE exit code: $($app.ExitCode)" }
+          } finally {
+            subst M: /d
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MOXA-Portable-Windows-x64
+          path: portable-dist/MOXA-Portable.exe
+          if-no-files-found: error
