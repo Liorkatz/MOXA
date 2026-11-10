@@ -177,6 +177,7 @@ class Controller:
     def __init__(self, config_path=None):
         self.config_path = config_path
         self.default_mode = 'real'
+        self.simulation_enabled = False
         self.pending_outputs = {}
         self.held_momentary = {}
         self.reset_input = {'ip': '', 'channel': 1}
@@ -424,6 +425,18 @@ class Controller:
         self.connections.connectionsLayout.addWidget(confirmationSection, 0, Qt.AlignmentFlag.AlignLeft)
         self.home.askConfirm.show()
         self.home.askConfirm.toggled.connect(lambda _: self.saveTimer.start(400) if self.saveTimer is not None else None)
+        # Optional laboratory simulation lives at the bottom of Settings.
+        # Its switch is the only simulation-related control shown while disabled.
+        self.simulationCheckbox = QCheckBox('Enable simulation', self.connections)
+        self.simulationCheckbox.setObjectName('enableSimulation')
+        self.simulationCheckbox.setChecked(False)
+        self.simulationCheckbox.setToolTip('Test relays and DI-triggered automation locally; no physical relay commands are sent.')
+        self.simulationHelp = QLabel('Simulation is active. Relay and DI actions are local only; no hardware commands.', self.connections)
+        self.simulationHelp.setWordWrap(True)
+        self.simulationHelp.setVisible(False)
+        self.connections.connectionsLayout.addWidget(self.simulationCheckbox, 0, Qt.AlignmentFlag.AlignLeft)
+        self.connections.connectionsLayout.addWidget(self.simulationHelp, 0, Qt.AlignmentFlag.AlignLeft)
+        self.simulationCheckbox.toggled.connect(self.set_simulation_enabled)
         self.settings.settingsNote.setText('Settings are saved locally.')
         self.devices = []
         self.entries = []
@@ -472,6 +485,12 @@ class Controller:
             self.saveTimer.timeout.connect(self.save_configuration)
             self.settings.defaultPulse.setValue(self.default_pulse)
             self.settings.timestampsCheck.setChecked(self.timestamps)
+        # Loading a saved explicit opt-in activates local simulation only.
+        if self.simulation_enabled:
+            self.apply_simulation_state(True)
+            self.simulationHelp.show()
+            self.scanNetworkButton.hide()
+            self.connections.testConnectionButton.hide()
         self.rebuild()
         self.log('MOXA Control ready. Real units require an explicit Connect; no automatic output changes at startup.')
         self.window.screens.currentChanged.connect(lambda _: self.update_window_width())
@@ -537,6 +556,11 @@ class Controller:
             if hasattr(client,'close'):
                 self.hardware.submit(uid,client.close,lambda result: None,lambda error: None)
         self.clients.clear()
+        if self.simulation_enabled:
+            self.apply_simulation_state(True)
+        self.simulationHelp.setVisible(self.simulation_enabled)
+        self.scanNetworkButton.setVisible(not self.simulation_enabled)
+        self.connections.testConnectionButton.setVisible(not self.simulation_enabled)
         if self.saveTimer is None:
             self.saveTimer = SettingsSaveTimer(self)
             self.saveTimer.setSingleShot(True)
@@ -608,6 +632,11 @@ class Controller:
             # Parsing/validation finishes before replacing the current document.
             self.devices = devices
             self.default_mode = 'real'
+            self.simulation_enabled = data['simulation_enabled']
+            self.simulationCheckbox.blockSignals(True)
+            self.simulationCheckbox.setChecked(self.simulation_enabled)
+            self.simulationCheckbox.blockSignals(False)
+            self.simulationHelp.setVisible(self.simulation_enabled)
             self.scenarios = data['scenarios']
             self.default_pulse = 0
             self.timestamps = data['timestamps']
@@ -632,7 +661,7 @@ class Controller:
         try:
             for d,p in zip(self.devices,self.panels):
                 d['manual_selection'] = {prefix: [getattr(p,f'{prefix}{i}').isChecked() for i in range(1,7)] for prefix in ('continuousSelect','momentarySelect')}
-            config_store.save(self.config_path,self.devices,self.default_pulse,self.timestamps,self.scenarios,self.default_mode,self.reset_input,self.home.askConfirm.isChecked(),self.autoPulsePreview.isChecked(),{'enabled':self.countdownEnabled.isChecked(),'seconds':self.countdownSeconds.value()})
+            config_store.save(self.config_path,self.devices,self.default_pulse,self.timestamps,self.scenarios,self.default_mode,self.reset_input,self.home.askConfirm.isChecked(),self.autoPulsePreview.isChecked(),{'enabled':self.countdownEnabled.isChecked(),'seconds':self.countdownSeconds.value()},simulation_enabled=self.simulation_enabled)
         except Exception as exc:
             self.save_error = f'{type(exc).__name__}: {exc}'
             self.saveStatus.setText('Save failed')
@@ -828,6 +857,19 @@ class Controller:
         p.diActionHeader.setToolTip('The action runs when this row\'s digital input changes from OFF to ON. Hover over an action for details.')
         p.diActionHeader.setAlignment(Qt.AlignmentFlag.AlignCenter)
         p.automationGrid.addWidget(p.diActionHeader, 0, 6)
+        p.diSimulationHeader = QLabel('Simulate DI', p.automationGroup)
+        p.diSimulationHeader.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        p.automationGrid.addWidget(p.diSimulationHeader, 0, 7)
+        p.diSimulationHeader.setVisible(self.simulation_enabled)
+        for i in range(6):
+            button = QPushButton(f'DI {i+1}', p.automationGroup)
+            button.setProperty('compactManage', True)
+            button.setFixedWidth(64)
+            button.setFixedHeight(26)
+            button.clicked.connect(lambda _, d=d, i=i: self.simulate_channel_di(d,i))
+            button.setVisible(self.simulation_enabled)
+            setattr(p, f'simulateDI{i+1}', button)
+            p.automationGrid.addWidget(button, i+1, 7)
         for i in range(6):
             action = QComboBox(p.automationGroup)
             for title, value in [('START channel','start'), ('OFF channel','off'), ('PAUSE unit','pause'), ('CONTINUE unit','continue'), ('RESET all','reset')]:
@@ -958,8 +1000,76 @@ class Controller:
             p.setMaximumHeight(16777215)
 
     def current_mode(self):
-        modes = {d.get('mode', 'real') for d in self.devices}
-        return next(iter(modes)) if len(modes) == 1 else ('mixed' if modes else self.default_mode)
+        return 'simulation' if self.simulation_enabled else 'real'
+
+    def apply_simulation_state(self, enabled):
+        """Isolate saved hardware configurations from all simulated relay states."""
+        if enabled:
+            if not self.devices:
+                unit = self.new_device(1)
+                unit['temporary_sim_unit'] = True
+                self.devices.append(unit)
+            for d in self.devices:
+                d['physical_states'] = list(d.get('physical_states', d['states']))
+                d['mode'] = 'simulation'
+                d['connected'] = True
+                d['states'] = [False] * 6
+                d['inputs'] = [False] * 6
+                for key in ('error','connecting','baseline','last_read','last_read_tick','_clock_started','_clock_paused'):
+                    d.pop(key, None)
+        else:
+            self.devices = [d for d in self.devices if not d.get('temporary_sim_unit')]
+            for d in self.devices:
+                d['mode'] = 'real'
+                d['connected'] = False
+                d['states'] = list(d.pop('physical_states', d['states']))
+                d['inputs'] = [False] * 6
+                for key in ('error','connecting','baseline','last_read','last_read_tick','_clock_started','_clock_paused'):
+                    d.pop(key, None)
+
+    def set_simulation_enabled(self, enabled):
+        if enabled == self.simulation_enabled:
+            return
+        if self.jobs or any(d.get('connecting') for d in self.devices) or (
+                enabled and (any(d['connected'] for d in self.devices) or bool(self.clients))):
+            self.simulationCheckbox.blockSignals(True)
+            self.simulationCheckbox.setChecked(self.simulation_enabled)
+            self.simulationCheckbox.blockSignals(False)
+            QMessageBox.information(
+                self.window, 'Mode change unavailable',
+                'Disconnect all hardware units and finish or RESET automation before changing modes. '
+                'Disconnect does not switch physical relays OFF.')
+            return
+        self.release_all_momentary()
+        self.cancel_countdown()
+        for d in self.devices:
+            for i in range(6):
+                self.cancel(d, i)
+        # Do not clear network write queues for live devices; enabling is denied
+        # while any real client or connection is present.
+        self.simulation_enabled = enabled
+        self.apply_simulation_state(enabled)
+        self.simulationHelp.setVisible(enabled)
+        self.scanNetworkButton.setVisible(not enabled)
+        self.connections.testConnectionButton.setVisible(not enabled)
+        self.rebuild()
+        self.log('Offline simulation enabled; physical relay commands are blocked.' if enabled
+                 else 'Hardware mode restored. Connect explicitly before controlling real relays.')
+        if self.saveTimer is not None:
+            self.saveTimer.start(400)
+
+    def simulate_channel_di(self, d, i):
+        """Generate one rising edge for a simulated digital input."""
+        if not self.simulation_enabled or not d['connected']:
+            return
+        inputs = list(d['inputs'])
+        inputs[i] = False
+        self.handle_input_sample(d, inputs)
+        inputs[i] = True
+        self.handle_input_sample(d, inputs)
+        inputs[i] = False
+        self.handle_input_sample(d, inputs)
+        self.render()
 
     def reset_input_active(self):
         return False
@@ -1001,6 +1111,8 @@ class Controller:
                     self.schedule(d,i,cfg)
 
     def communication_status(self,d):
+        if self.simulation_enabled:
+            return ('simulation', 'Simulation · offline', 'No hardware I/O')
         last = d.get('last_read','—')
         if d.get('connecting'): state,title='connecting','Connecting…'
         elif d.get('error'): state,title='error','Communication error'
@@ -1174,13 +1286,14 @@ class Controller:
         if self.saveTimer is not None: self.saveTimer.start(400)
 
     def paint_run_lamp(self,p):
-        # A confirmed connection is solid green; only active automation blinks.
+        # A confirmed physical connection is green; simulation is blue.
         colors = {'idle': '#cbd4df', 'connected': '#20c875', 'paused': '#e4ad32',
-                  'stale': '#e4ad32'}
+                  'stale': '#e4ad32', 'simulation': '#4c8ee8'}
         color = ('#20c875' if p.lampLit else '#cbd4df') if p.lampState == 'running' else colors[p.lampState]
         p.runLamp.setStyleSheet(f'QFrame#runLamp {{ background: {color}; border: 1px solid #9aaabc; border-radius: 7px; }}')
         text = {'idle':'Disconnected', 'connected':'Connected', 'running':'Connected · running',
-                'paused':'Connected · paused', 'stale':'Connection response is stale'}[p.lampState]
+                'paused':'Connected · paused', 'stale':'Connection response is stale',
+                'simulation':'Simulation · offline'}[p.lampState]
         p.runLamp.setAccessibleName(f'Unit status: {text}')
         p.runLamp.setToolTip(f'Unit status: {text}')
 
@@ -1207,8 +1320,10 @@ class Controller:
                 p.timeline.set_device(d)
                 p.ipAddress.setText(d['ip'])
                 self.update_communication_label(p,d)
+                p.connectButton.setVisible(not self.simulation_enabled)
                 p.connectButton.setText('Connecting…' if d.get('connecting') else ('Disconnect' if d['connected'] else 'Connect'))
                 p.connectButton.setEnabled(not d.get('connecting'))
+                p.diSimulationHeader.setVisible(self.simulation_enabled)
                 p.triggerButton.setText('Read D/I')
                 p.manualGroup.setEnabled(d['connected'])
                 p.runSelectedButton.setEnabled(d['connected'])
@@ -1219,6 +1334,9 @@ class Controller:
                 p.turnOnButton.setText('Turn Off' if all_on else 'Turn On')
                 for i in range(6):
                     n=i+1
+                    simulate_button = getattr(p, f'simulateDI{n}')
+                    simulate_button.setVisible(self.simulation_enabled)
+                    simulate_button.setEnabled(self.simulation_enabled and d['connected'] and bool(d['config'][i]['trigger']))
                     action = getattr(p,f'diAction{n}')
                     action.blockSignals(True)
                     action.setCurrentIndex(action.findData(d['config'][i].get('action','start')))
@@ -1243,8 +1361,9 @@ class Controller:
                 count=len(unit_jobs)
                 paused = bool(unit_jobs) and all(job.get('paused') for job in unit_jobs)
                 communication_state = self.communication_status(d)[0]
-                lampState = ('idle' if not d['connected'] else
-                             'stale' if communication_state != 'connected' else
+                lampState = ('simulation' if self.simulation_enabled and not count else
+                             'idle' if not d['connected'] else
+                             'stale' if communication_state not in ('connected','simulation') else
                              'paused' if paused else 'running' if count else 'connected')
                 if p.lampState != lampState:
                     p.lampState = lampState
@@ -1269,7 +1388,10 @@ class Controller:
         if hasattr(self, 'combinedRunButton'):
             self.combinedRunButton.setText(self.home.runBothButton.text())
             self.combinedResetButton.setVisible(bool(all_paused))
-        self.window.statusbar.showMessage(f'{sum(d.get("mode")=="real" for d in self.devices)} real / {len(self.devices)} units · {len(self.devices)*6} relays')
+        if self.simulation_enabled:
+            self.window.statusbar.showMessage(f'SIMULATION · {len(self.devices)} virtual unit(s) · NO HARDWARE COMMANDS')
+        else:
+            self.window.statusbar.showMessage(f'{len(self.devices)} real / {len(self.devices)} units · {len(self.devices)*6} relays')
 
     def select_panel(self,p,value):
         for i in range(1,7):
@@ -1458,6 +1580,8 @@ class Controller:
         self.render()
 
     def poll_inputs(self):
+        if self.simulation_enabled:
+            return
         for d,p in zip(self.devices,self.panels): self.update_communication_label(p,d)
         for d in self.devices:
             client = self.clients.get(d['uid'])
@@ -1478,6 +1602,12 @@ class Controller:
                 self.hardware.submit(d['uid'],lambda client=client:(client.bits(1),client.bits(2)),success,failure)
 
     def set_output(self,d,i,value,done=None,job=None):
+        if self.simulation_enabled:
+            # Simulated state changes never enter HardwareQueue or the network backend.
+            if d.get('connected'):
+                d['states'][i] = bool(value)
+                if done: done()
+            return
         client = self.clients.get(d['uid'])
         if not d['connected'] or client is None:
             return
@@ -1713,7 +1843,7 @@ class Controller:
         table=self.manage.deviceTable
         table.setRowCount(len(self.devices))
         for r,d in enumerate(self.devices):
-            for c,value in enumerate([d['name'],d['ip'],'6 relays','Connected' if d['connected'] else 'Disconnected']):
+            for c,value in enumerate([d['name'],d['ip'],'6 relays','Simulation' if self.simulation_enabled else ('Connected' if d['connected'] else 'Disconnected')]):
                 table.setItem(r,c,QTableWidgetItem(value))
                 table.item(r,c).setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         table.resizeColumnsToContents()
@@ -1793,7 +1923,9 @@ class Controller:
         self.connections.passwordInput.setText(d.get('password', ''))
         self.connections.passwordInput.setPlaceholderText('Default: moxa (if required)')
         self.passwordDefaultHint.setVisible(self.editing is None)
-        self.connections.connectionMessage.setText('Save the unit, then press Connect beside its IP on the Home page.')
+        self.connections.connectionMessage.setText(
+            'Local simulation is active; no network writes.' if self.simulation_enabled
+            else 'Save the unit, then press Connect beside its IP on the Home page.')
         self.connections.saveConnectionButton.setEnabled(self.editing is not None or len(self.devices)<5)
 
     def connection_values(self):
@@ -1812,7 +1944,7 @@ class Controller:
         except ValueError as exc:
             self.connections.connectionMessage.setText(str(exc)); return
         d=self.editing
-        if d and d.get('mode') == 'real' and (d['connected'] or d.get('connecting')):
+        if d and not self.simulation_enabled and d.get('mode') == 'real' and (d['connected'] or d.get('connecting')):
             self.connections.connectionMessage.setText('Wait for connection to finish, then disconnect before editing real connection settings.')
             return
         if d is None:
@@ -1822,16 +1954,27 @@ class Controller:
             self.devices.append(d)
         else: self.stop_device(d)
         d.update(values)
-        d['connected'] = False
+        if self.simulation_enabled:
+            d.setdefault('physical_states', [False] * 6)
+            d['mode'] = 'simulation'
+            d['connected'] = True
+            d['states'] = [False] * 6
+            d['inputs'] = [False] * 6
+        else:
+            d['connected'] = False
         index=self.devices.index(d)
         self.rebuild()
         self.connections.unitSelector.setCurrentIndex(index)
-        self.connections.connectionMessage.setText('Saved. Real units remain disconnected until Connect is pressed.')
+        self.connections.connectionMessage.setText('Saved. Local test controls are active.' if self.simulation_enabled
+                                                    else 'Saved. Real units remain disconnected until Connect is pressed.')
         if hasattr(self, 'discoveryDialog'):
             self.discoveryDialog.show_saved()
         self.log(f'Connection settings saved: {d["name"]} / {d["ip"]}:{d["port"]} ({d["mode"]}).')
 
     def test_connection(self):
+        if self.simulation_enabled:
+            self.connections.connectionMessage.setText('Local simulation active; no physical connection is tested.')
+            return
         try: values=self.connection_values()
         except ValueError as exc:
             self.connections.connectionMessage.setText(str(exc)); return
@@ -1863,6 +2006,8 @@ class Controller:
         self.log(f'Removed {d["name"]}.')
 
     def toggle_connection(self, d=None):
+        if self.simulation_enabled:
+            return  # Simulated connections are managed only by the Settings opt-in.
         if d is None:
             row = self.manage.deviceTable.currentRow()
             if row < 0: return
