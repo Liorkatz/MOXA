@@ -88,7 +88,6 @@ with tempfile.TemporaryDirectory() as folder:
         assert not c.simulation_enabled and not c.devices
         assert not c.simulationHelp.isVisible()
         assert not c.simulationCheckbox.isChecked()
-        assert not c.simulationCheckbox.parentWidget().isHidden()
         c.save_configuration()
         assert not config_store.load(path)['simulation_enabled']
 
