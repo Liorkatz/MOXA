@@ -14,11 +14,13 @@ File → Save, Save As and Open handle one JSON configuration containing unit co
 
 ## Operation
 
-- Home: manual outputs and collapsible unit cards. Show Automation displays timings, RUN/PAUSE/CONTINUE/RESET, per-channel DI actions and pulse previews.
-- Settings: scan/add/edit/remove units, connect/disconnect, confirmation preference, automatic pulse preview and optional configurable countdown before RUN.
-- LIVE requires an explicit Connect and hides simulation controls. Simulation does not send hardware commands.
-- Each channel can select None or its corresponding DI only. Simulation uses one button per input. START/OFF affect the channel, PAUSE/CONTINUE affect the unit, RESET affects all units and restores their pre-run Continuous states.
-- PAUSE holds output states. RESET cancels jobs and restores the saved Continuous baseline. Unit header lamps blink green while running and stay amber while paused.
+- Home: Connect/Disconnect beside each IP, manual outputs and collapsible unit cards. Show Automation displays timings, RUN/PAUSE/CONTINUE/RESET, per-channel DI actions and pulse previews. Global automation buttons appear only on Home.
+- Settings: scan/add/edit/remove units, confirmation preference, automatic pulse preview and optional configurable countdown before RUN. Enter a plain IPv4 address to scan its /24 range; the suffix is added internally.
+- Physical units require an explicit Connect. Simulation mode and demo units have been removed. Legacy configurations load disconnected as real units; startup never sends output writes.
+- Momentary: press to turn ON, hold to stay ON, release to turn OFF, individually or for selected channels. Release, hiding the control and window deactivation request OFF. Momentary is direct and does not open the optional confirmation dialog, which would consume the release event. Network communication and mechanical relay response still introduce latency.
+- Writes queued in the same GUI event-loop turn are batched per unit. Contiguous selected relays use one multiple-coil write; gaps are never overwritten. One readback validates all requested outputs. Six contiguous channels need two Modbus transactions instead of twelve. Writes are never retried after ambiguous failures.
+- Each channel can select None or its corresponding physical DI only. START/OFF affect the channel, PAUSE/CONTINUE affect the unit, RESET affects all units and restores their pre-run Continuous states.
+- PAUSE holds output states. RESET cancels jobs and restores the saved Continuous baseline. Unit header lamps are green when connected, blink green during automation, stay amber while paused, and turn gray when disconnected.
 - Queued automation writes wait during PAUSE and are resumed once on CONTINUE; phase timers start after acknowledgement. A hardware request already transmitted before PAUSE cannot be recalled. RESET preserves idle units' current Continuous states when they have no automation baseline.
 - Configuration files are fully validated before replacing the current document. Runtime connection/job fields are never imported. Manual selection changes and card collapse preferences participate in autosave.
 - Polling runs every 250 ms. Short DI pulses may be missed; cross-unit timing is not deterministic.
@@ -31,8 +33,20 @@ The direct Modbus backend supports E1214 default mapping only. Password authenti
 - `assets/`: required interface icons.
 - `vendor/`: required MOXA DLL and provenance note.
 - `.venv/`: local installed Python environment, retained for this computer.
-- `tests/`: maintained verification scripts. Run with `.venv\Scripts\python.exe tests\verify_file_menu.py`, for example. Hardware checks use mocks; no physical relay operation is performed.
-- `transfer/readable-code/`: the current text-only transfer package. It contains three readable code files, one restore-command text file, a separate encoded DLL text file and an optional direct `MXIO.dll` copy.
+- `tests/`: run `.venv64\Scripts\python.exe tests\verify_live_controls.py` for current live-control, automation and protocol checks. Tests use isolated peers; no physical relay operation is performed. Older scripts referencing simulation controls describe the retired interface and require adaptation before use.
+- `transfer/readable-code/`: legacy text-only transfer snapshot. Rebuild before using it for this version; direct source downloads and the EXE build use the current root files.
+
+## Updating an existing installation
+
+Replace `main.py`, `moxa_backend.py`, `network_discovery.py` and `config_store.py` together. Keep your own settings JSON. No dependency change is required (PySide6 6.11.2 / Python 3.12 x64).
+
+Build the standalone EXE again with:
+
+```powershell
+.\.venv64\Scripts\python.exe -m PyInstaller --noconfirm --clean MOXA.spec
+```
+
+Output: `dist/MOXA-Portable.exe`. Source changes do not modify an already-built EXE.
 
 Rebuild the transfer package after source/configuration changes:
 
@@ -43,3 +57,4 @@ Rebuild the transfer package after source/configuration changes:
 Copy the contents of `MOXA-CODE-1.txt`, `MOXA-CODE-2.txt`, `MOXA-CODE-3.txt`, `MOXA-DLL.txt` and `MOXA-RESTORE.txt` into files with identical names in one destination folder. Follow the command at the top of `MOXA-RESTORE.txt`. It validates all files and restores into a new folder without overwriting existing files or installing software.
 
 Old ZIP packages, redundant transfer formats, restore-test copies, SDK installers/examples, legacy UI sources and historical screenshots/reports were removed during cleanup. GUI tests can recreate temporary screenshots under `archive/screenshots/`; those images are not needed to run the application.
+

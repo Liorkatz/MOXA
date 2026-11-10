@@ -87,7 +87,8 @@ def validate_configuration(data):
         selections=raw.get('manual_selection',{})
         if not isinstance(selections,dict) or any(key not in ('continuousSelect','momentarySelect') for key in selections):
             raise ValueError('Invalid manual selection')
-        records.append(dict(uid=uid,name=name,ip=ip,mode=mode,password=password,
+        # Accept legacy documents but never restore a simulated connection.
+        records.append(dict(uid=uid,name=name,ip=ip,mode='real',password=password,
             port=integer(raw.get('port'),1,65535,'port'),timeout=integer(raw.get('timeout'),1,60000,'timeout'),
             names=strings(raw.get('names'),'channel names'),config=channel_configuration(raw.get('config')),
             continuous_states=flags(raw.get('continuous_states',[False]*6),'Continuous states'),
@@ -99,11 +100,11 @@ def validate_configuration(data):
     for name,value in scenarios.items():
         if not isinstance(name,str) or not name.strip() or len(name)>80: raise ValueError('Invalid scenario name')
         saved_scenarios[name]=scenario_records(value)
-    default=data.get('default_mode','real' if records and all(d['mode']=='real' for d in records) else 'simulation')
+    default=data.get('default_mode','real')
     if default not in ('real','simulation'): raise ValueError('Invalid default mode')
     countdown=data.get('countdown',{'enabled':False,'seconds':3})
     if not isinstance(countdown,dict): raise ValueError('Invalid countdown')
-    return dict(version=1,devices=records,scenarios=saved_scenarios,default_mode=default,
+    return dict(version=1,devices=records,scenarios=saved_scenarios,default_mode='real',
         pulse=integer(data.get('pulse',0),0,3600000,'manual pulse'),
         timestamps=boolean(data.get('timestamps',True),'timestamps flag'),
         confirm_actions=boolean(data.get('confirm_actions',False),'confirmation flag'),
@@ -136,7 +137,7 @@ def protect(value, decrypt=False):
         kernel.LocalFree(ctypes.cast(target.data,ctypes.c_void_p))
 
 
-def save(path, devices, pulse, timestamps, scenarios=None, default_mode='simulation', reset_input=None, confirm_actions=False, auto_pulse_preview=False, countdown=None):
+def save(path, devices, pulse, timestamps, scenarios=None, default_mode='real', reset_input=None, confirm_actions=False, auto_pulse_preview=False, countdown=None):
     records = []
     for device in devices:
         record = {key:device[key] for key in ('uid','name','ip','port','timeout','mode','names','config')}
@@ -154,3 +155,4 @@ def save(path, devices, pulse, timestamps, scenarios=None, default_mode='simulat
 def load(path):
     data = json.loads(Path(path).read_text(encoding='utf-8'))
     return validate_configuration(data)
+

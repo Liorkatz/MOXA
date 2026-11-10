@@ -41,7 +41,7 @@ assert dialog.table.rowCount() == len(c.devices)
 dialog.add_result(result)
 dialog.add_result(result)
 assert dialog.table.rowCount() == len(c.devices) + 1
-assert dialog.table.item(2, 3).text().startswith('New')
+assert dialog.table.item(len(c.devices), 3).text().startswith('New')
 c.use_discovered(result)
 assert c.editing is None and c.connections.ipInput.text() == result['ip']
 c.save_connection()
@@ -49,3 +49,4 @@ assert any(d['ip'] == result['ip'] for d in c.devices)
 c.use_discovered(result)
 assert c.editing['ip'] == result['ip']
 print('PASS: fragmented identification replies, exception replies, invalid transactions, timeout, saved/new results, deduplication, add/edit flow. No network traffic sent.')
+

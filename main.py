@@ -1,4 +1,4 @@
-"""MOXA Control — GUI simulator. No network or physical device access."""
+"""MOXA Control for physical ioLogik E1214 units."""
 from pathlib import Path
 from datetime import datetime
 from ipaddress import IPv4Address
@@ -65,7 +65,13 @@ class SaveOnClose(QObject):
 
     def eventFilter(self, watched, event):
         c = self.controller
+        if event.type() in (QEvent.Type.Close, QEvent.Type.WindowDeactivate):
+            c.release_all_momentary()
         if event.type() == QEvent.Type.Close:
+            for d in c.devices:
+                for i in range(6):
+                    if (d['uid'], i) in c.jobs: c.cancel(d, i)
+            c.flush_outputs()
             c.cancel_countdown()
         if event.type() == QEvent.Type.Close and c.config_path:
             if c.saveTimer is not None: c.saveTimer.stop()
@@ -82,6 +88,18 @@ class SaveOnClose(QObject):
         return False
 
 
+class MomentaryGuard(QObject):
+    def __init__(self, controller, button):
+        super().__init__(button)
+        self.controller = controller
+        button.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if event.type() in (QEvent.Type.Hide, QEvent.Type.FocusOut, QEvent.Type.WindowDeactivate):
+            self.controller.release_momentary(watched)
+        return False
+
+
 class PanelLayoutAdapter(QObject):
     def __init__(self, panel):
         super().__init__(panel)
@@ -95,7 +113,8 @@ class PanelLayoutAdapter(QObject):
             p = self.panel
             needed = p.manualGroup.width() + p.automationGroup.width() + 40
             direction = QBoxLayout.Direction.LeftToRight
-            minimum = needed if p.automationGroup.isVisible() else p.manualGroup.width() + 24
+            minimum = max(p.deviceBar.sizeHint().width() + 24,
+                          needed if p.automationGroup.isVisible() else p.manualGroup.width() + 24)
             if p.minimumWidth() != minimum:
                 p.setMinimumWidth(minimum)
             maximum = 16777215 if p.automationGroup.isVisible() else minimum
@@ -157,7 +176,9 @@ class PanelLayoutAdapter(QObject):
 class Controller:
     def __init__(self, config_path=None):
         self.config_path = config_path
-        self.default_mode = 'simulation'
+        self.default_mode = 'real'
+        self.pending_outputs = {}
+        self.held_momentary = {}
         self.reset_input = {'ip': '', 'channel': 1}
         self.scenarios = {}
         self.config_load_failed = False
@@ -195,12 +216,10 @@ class Controller:
         self.clients = {}
         self.output_versions = {}
         self.window.destroyed.connect(self.hardware.close)
-        self.connections.modeInput = QComboBox(self.connectionEditor if hasattr(self, 'connectionEditor') else self.connections)
-        self.connections.modeInput.addItems(['Simulation', 'Real E1214 · default mapping'])
         self.connections.manageContainer.layout().addWidget(self.manage)
         self.connections.testConnectionButton.setText('Test connection')
         self.manage.toggleDeviceButton.setText('Connect / Disconnect')
-        self.manage.deviceHint.setText('Choose Simulation or Real E1214 when adding a unit.')
+        self.manage.deviceHint.setText('Add or edit units here. Connect beside the IP on the Home page.')
         self.connections.passwordInput.setToolTip('Optional MOXA MXIO login. Requires official 64-bit MXIO.dll in vendor/. Password is saved in the text settings file.')
         self.connections.connectionsLayout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.connections.connectionsLayout.setSpacing(8)
@@ -217,8 +236,6 @@ class Controller:
         self.passwordDefaultHint = QLabel('Factory default: moxa · leave blank if no password is required.', self.connections)
         self.passwordDefaultHint.setWordWrap(True)
         form.addWidget(self.passwordDefaultHint, 4, 2, 1, 2)
-        form.addWidget(QLabel('Connection mode'), 3, 0)
-        form.addWidget(self.connections.modeInput, 3, 1, 1, 3)
         for row, left, right in [(0, 'unitSelector', 'portInput'),
                                  (1, 'nameInput', 'timeoutInput'),
                                  (2, 'ipInput', 'passwordInput')]:
@@ -232,9 +249,6 @@ class Controller:
         self.scanNetworkButton.setFixedWidth(180)
         self.connections.connectionTitleBar.insertWidget(1, self.scanNetworkButton)
         self.scanNetworkButton.clicked.connect(self.open_discovery)
-        self.addSimulationButton = QPushButton('Add simulated MOXA', self.connections)
-        self.connections.connectionTitleBar.insertWidget(2, self.addSimulationButton)
-        self.addSimulationButton.clicked.connect(self.add_simulated_device)
         for name in ('newUnitButton', 'saveConnectionButton', 'testConnectionButton'):
             getattr(self.connections, name).setFixedWidth(200 if name == 'testConnectionButton' else 120)
         self.connectionEditor = QWidget()
@@ -295,12 +309,6 @@ class Controller:
             toolbar.insertWidget(index, button)
         toolbar.insertWidget(2, self.home.showAutomation)
         toolbar.removeWidget(self.home.askConfirm)
-        self.modeButton = QPushButton('SIMULATION', self.homeToolbar)
-        self.modeButton.setObjectName('modeButton')
-        self.modeButton.setFixedWidth(125)
-        self.modeButton.setToolTip('Switch all units between simulation and LIVE. LIVE requires an explicit Connect; switching does not change physical outputs.')
-        self.modeButton.clicked.connect(lambda: self.set_global_mode('simulation' if self.current_mode() == 'real' else 'real'))
-        toolbar.insertWidget(2,self.modeButton)
         self.window.screens.tabBar().hide()
         self.window.screens.currentChanged.connect(
             lambda index: [button.setChecked(i == index) for i, button in enumerate(self.navigationButtons)])
@@ -419,8 +427,8 @@ class Controller:
         self.connections.connectionsLayout.addWidget(confirmationSection, 0, Qt.AlignmentFlag.AlignLeft)
         self.home.askConfirm.show()
         self.home.askConfirm.toggled.connect(lambda _: self.saveTimer.start(400) if self.saveTimer is not None else None)
-        self.settings.settingsNote.setText('Settings are saved locally and apply to simulation and LIVE.')
-        self.devices = [self.new_device(i) for i in range(1,3)]
+        self.settings.settingsNote.setText('Settings are saved locally.')
+        self.devices = []
         self.entries = []
         self.panels = []
         self.auto_panels = []
@@ -443,7 +451,7 @@ class Controller:
         self.home.promptInput.returnPressed.connect(self.ask_prompt)
         self.manage.editDeviceButton.clicked.connect(self.edit_connection)
         self.manage.removeDeviceButton.clicked.connect(self.remove_device)
-        self.manage.toggleDeviceButton.clicked.connect(self.toggle_connection)
+        self.manage.toggleDeviceButton.hide()
         self.connections.newUnitButton.clicked.connect(self.new_connection)
         self.connections.unitSelector.currentIndexChanged.connect(self.load_connection)
         self.connections.saveConnectionButton.clicked.connect(self.save_connection)
@@ -472,6 +480,7 @@ class Controller:
         self.rebuild()
         self.log('MOXA Control ready. Real units require an explicit Connect; no automatic output changes at startup.')
         self.window.screens.currentChanged.connect(lambda _: self.update_window_width())
+        self.window.screens.currentChanged.connect(lambda _: self.update_home_actions())
         self.update_window_width()
         self.saveCloseGuard = SaveOnClose(self)
         fileMenu = self.window.menuBar().addMenu('&File')
@@ -550,7 +559,9 @@ class Controller:
         self.navigationButtons[2].setVisible(not managing)
         compact = self.window.screens.currentIndex() == 0 and not self.home.showAutomation.isChecked()
         if compact:
-            width = max(720, self.homeToolbar.layout().sizeHint().width() + 12)
+            card_width = max((max(p.deviceBar.sizeHint().width() + 24,
+                                  p.manualGroup.width() + 24) for p in self.panels), default=660)
+            width = max(720, card_width + 60, self.homeToolbar.layout().sizeHint().width() + 12)
             # A fixed top-level width makes Windows disable maximization and
             # can leave its native window state stale on the next toggle.
             self.window.setMaximumWidth(16777215)
@@ -578,7 +589,7 @@ class Controller:
 
     def new_device(self, number):
         return dict(uid=number, name=f'MOXA {number}', ip=f'169.254.10.{80+number}', port=502,
-                    timeout=2000, password='', mode='simulation', connected=True, inputs=[False]*6, names=[f'Channel{i+1}' for i in range(6)],
+                    timeout=2000, password='', mode='real', connected=False, inputs=[False]*6, names=[f'Channel{i+1}' for i in range(6)],
                     states=[False]*6, config=[dict(active=True, first=(i*500), pulse=1000,
                     repeat=3, between=1000, trigger=0) for i in range(6)])
 
@@ -596,12 +607,12 @@ class Controller:
             devices = []
             for record in data['devices']:
                 d = self.new_device(record['uid'])
-                d.update(record,connected=record['mode']=='simulation')
+                d.update(record, mode='real', connected=False)
                 d['states'] = list(record['continuous_states'])
                 devices.append(d)
             # Parsing/validation finishes before replacing the current document.
             self.devices = devices
-            self.default_mode = data['default_mode']
+            self.default_mode = 'real'
             self.scenarios = data['scenarios']
             self.default_pulse = 0
             self.timestamps = data['timestamps']
@@ -609,7 +620,7 @@ class Controller:
             self.autoPulsePreview.setChecked(data['auto_pulse_preview'])
             self.countdownEnabled.setChecked(data['countdown']['enabled'])
             self.countdownSeconds.setValue(data['countdown']['seconds'])
-            self.reset_input = {'ip': '', 'channel': 1}  # Legacy override removed; use per-row RESET all.
+            self.reset_input = {'ip': '', 'channel': 1}  # Use per-row RESET all.
             self.config_load_failed = False
             return True
         except Exception as exc:
@@ -659,6 +670,7 @@ class Controller:
                 QMessageBox.warning(self.window,'Export failed',str(exc))
 
     def rebuild(self):
+        self.release_all_momentary()
         for page, scroll in [(self.home,'devicesScroll')]:
             target = getattr(page,scroll).widget().layout()
             while target.count():
@@ -672,9 +684,6 @@ class Controller:
             layout = QVBoxLayout(empty)
             self.emptyUnitsHint = QLabel('No units configured. Scan / add a unit to begin.')
             layout.addWidget(self.emptyUnitsHint)
-            self.emptySimulationButton = QPushButton('Add simulated MOXA')
-            self.emptySimulationButton.clicked.connect(self.add_simulated_device)
-            layout.addWidget(self.emptySimulationButton)
             add = QPushButton('Scan / Add unit…')
             add.clicked.connect(self.open_discovery)
             layout.addWidget(add)
@@ -747,6 +756,10 @@ class Controller:
         p.ipSelector.view().setFixedHeight(rowHeight * p.ipSelector.count() + 4)
         p.ipSelector.setCurrentIndex(self.devices.index(d))
         p.deviceBar.insertWidget(3, p.ipSelector)
+        p.connectButton = QPushButton('Connect', p)
+        p.connectButton.setFixedWidth(110)
+        p.connectButton.clicked.connect(lambda: self.toggle_connection(d))
+        p.deviceBar.insertWidget(4, p.connectButton)
         p.deviceBar.setStretch(0, 0)
         p.deviceBar.setStretch(1, 0)
         p.deviceBar.setStretch(2, 0)
@@ -820,17 +833,7 @@ class Controller:
         p.diActionHeader.setToolTip('The action runs when this row\'s digital input changes from OFF to ON. Hover over an action for details.')
         p.diActionHeader.setAlignment(Qt.AlignmentFlag.AlignCenter)
         p.automationGrid.addWidget(p.diActionHeader, 0, 6)
-        p.diSimulationHeader = QLabel('Simulate DI', p.automationGroup)
-        p.diSimulationHeader.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        p.automationGrid.addWidget(p.diSimulationHeader, 0, 7)
         for i in range(6):
-            simulate = QPushButton(f'DI {i+1}', p.automationGroup)
-            simulate.setProperty('compactManage', True)
-            simulate.setFixedWidth(64)
-            simulate.setFixedHeight(26)
-            simulate.clicked.connect(lambda _, d=d, i=i: self.simulate_channel_di(d,i))
-            setattr(p,f'simulateDI{i+1}',simulate)
-            p.automationGrid.addWidget(simulate,i+1,7)
             action = QComboBox(p.automationGroup)
             for title, value in [('START channel','start'), ('OFF channel','off'), ('PAUSE unit','pause'), ('CONTINUE unit','continue'), ('RESET all','reset')]:
                 action.addItem(title, value)
@@ -900,7 +903,7 @@ class Controller:
         p.turnOnButton.clicked.connect(lambda: self.toggle_selected(d,p))
         if hasattr(p, 'turnOffButton'):
             p.turnOffButton.clicked.connect(lambda: self.selected(d,p,False,False))
-        p.momentaryButton.clicked.connect(lambda: self.selected(d,p,True))
+        self.bind_momentary(p.momentaryButton, d, lambda: [i for i in range(6) if getattr(p, f'momentarySelect{i+1}').isChecked()])
         if hasattr(p, 'selectAllButton'):
             p.selectAllButton.clicked.connect(lambda: self.select_panel(p,True))
         if hasattr(p, 'clearButton'):
@@ -922,7 +925,7 @@ class Controller:
                 getattr(p,f'{prefix}{n}').toggled.connect(lambda _,d=d,p=p: self.manual_selection_changed(d,p))
             getattr(p,f'channelName{n}').editingFinished.connect(lambda d=d,p=p,i=i: self.rename(d,p,i))
             getattr(p,f'continuous{n}').toggled.connect(lambda value,d=d,i=i: self.manual(d,i,value))
-            getattr(p,f'pulse{n}').clicked.connect(lambda d=d,i=i: self.pulse(d,i))
+            self.bind_momentary(getattr(p,f'pulse{n}'), d, lambda i=i: [i])
             for prefix,key in [('active','active'),('firstDelay','first'),('pulseTime','pulse'),('repeat','repeat'),('between','between'),('trigger','trigger')]:
                 w=getattr(p,f'{prefix}{n}')
                 signal = w.toggled if prefix=='active' else w.currentIndexChanged if prefix=='trigger' else w.valueChanged
@@ -960,7 +963,7 @@ class Controller:
             p.setMaximumHeight(16777215)
 
     def current_mode(self):
-        modes = {d.get('mode', 'simulation') for d in self.devices}
+        modes = {d.get('mode', 'real') for d in self.devices}
         return next(iter(modes)) if len(modes) == 1 else ('mixed' if modes else self.default_mode)
 
     def reset_input_active(self):
@@ -1002,60 +1005,7 @@ class Controller:
                         d['_clock_started'] = monotonic()
                     self.schedule(d,i,cfg)
 
-    def simulate_channel_di(self,d,i):
-        if d.get('mode') == 'real' or not d['connected']: return
-        inputs = list(d['inputs'])
-        inputs[i] = False
-        self.handle_input_sample(d, inputs)
-        inputs[i] = True
-        self.handle_input_sample(d, inputs)
-        inputs[i] = False
-        self.handle_input_sample(d, inputs)
-        self.render()
-
-    def add_simulated_device(self):
-        if len(self.devices) >= 5:
-            self.window.statusbar.showMessage('Up to five units can be added.', 5000)
-            return
-        number = next(i for i in range(1, 6) if all(d['uid'] != i for d in self.devices))
-        device = self.new_device(number)
-        suffix = number
-        while any(d['ip'] == device['ip'] or d['name'].casefold() == device['name'].casefold() for d in self.devices):
-            suffix += 1
-            device.update(name=f'MOXA {suffix}', ip=f'169.254.10.{80 + suffix}')
-        self.devices.append(device)
-        self.default_mode = 'simulation'
-        self.rebuild()
-        self.window.screens.setCurrentIndex(0)
-        self.log(f'Added simulated unit: {device["name"]}. No network access.')
-
-    def set_global_mode(self,mode):
-        self.cancel_countdown()
-        if mode not in ('simulation','real'): raise ValueError('Invalid connection mode')
-        if self.jobs or any(d.get('connecting') for d in self.devices):
-            self.log('Mode unchanged: RESET all jobs and wait for connections to finish before changing mode.')
-            self.window.statusbar.showMessage('RESET all jobs and wait for connections before changing mode.',8000)
-            return False
-        self.default_mode = mode
-        for d in self.devices:
-            client=self.clients.pop(d['uid'],None)
-            if client and hasattr(client,'close'):
-                self.hardware.submit(d['uid'],client.close,lambda result: None,lambda error: self.log(error))
-            d['mode']=mode
-            d['connected']=mode=='simulation'
-            d['inputs'] = [False] * 6
-            for key in ('error','baseline','last_read','last_read_tick','_clock_started','_clock_paused'):
-                d.pop(key,None)
-        self.clients.clear()
-        self.connections.modeInput.setCurrentIndex(1 if mode=='real' else 0)
-        self.refresh_table()
-        self.render()
-        self.log('Mode: LIVE. Select units in Settings and Connect.' if mode=='real' else 'Mode: SIMULATION. No physical output commands are sent.')
-        return True
-
     def communication_status(self,d):
-        if d.get('mode') != 'real':
-            return ('simulation','Simulation · ready' if d['connected'] else 'Simulation · disconnected','No hardware reads')
         last = d.get('last_read','—')
         if d.get('connecting'): state,title='connecting','Connecting…'
         elif d.get('error'): state,title='error','Communication error'
@@ -1229,11 +1179,11 @@ class Controller:
         if self.saveTimer is not None: self.saveTimer.start(400)
 
     def paint_run_lamp(self,p):
-        color = '#e4ad32' if p.lampState == 'paused' else ('#20c875' if p.lampLit else '#cbd4df')
+        color = '#e4ad32' if p.lampState == 'paused' else ('#20c875' if p.lampLit or p.lampState == 'connected' else '#cbd4df')
         p.runLamp.setStyleSheet(f'QFrame#runLamp {{ background: {color}; border: 1px solid #9aaabc; border-radius: 7px; }}')
-        text = {'idle':'Idle', 'running':'Running', 'paused':'Paused'}[p.lampState]
-        p.runLamp.setAccessibleName(f'Unit automation: {text}')
-        p.runLamp.setToolTip(f'Unit automation: {text}')
+        text = {'idle':'Disconnected', 'connected':'Connected', 'running':'Connected · running', 'paused':'Connected · paused'}[p.lampState]
+        p.runLamp.setAccessibleName(f'Unit status: {text}')
+        p.runLamp.setToolTip(f'Unit status: {text}')
 
     def blink_run_lamp(self):
         self.lampLit = not self.lampLit
@@ -1251,25 +1201,16 @@ class Controller:
         if state == 'running': self.lampTimer.start()
 
     def render(self):
-        mode={'real':'LIVE', 'mixed':'MIXED', 'simulation':'SIMULATION'}[self.current_mode()]
-        self.addSimulationButton.setVisible(mode != 'LIVE')
-        if not self.devices and hasattr(self,'emptySimulationButton'):
-            self.emptySimulationButton.setVisible(mode != 'LIVE')
-        self.addSimulationButton.setEnabled(len(self.devices) < 5)
-        self.modeButton.setText(mode)
-        self.modeButton.setProperty('live',mode=='LIVE')
-        self.modeButton.style().unpolish(self.modeButton)
-        self.modeButton.style().polish(self.modeButton)
         for panels in [self.panels,self.auto_panels]:
             for d,p in zip(self.devices,panels):
                 if not p.deviceName.hasFocus():
                     p.deviceName.setText(d['name'])
                 p.timeline.set_device(d)
-                simulated = d.get('mode') != 'real'
-                p.diSimulationHeader.setVisible(simulated)
                 p.ipAddress.setText(d['ip'])
                 self.update_communication_label(p,d)
-                p.triggerButton.setText('Read D/I' if d.get('mode') == 'real' else 'Simulate D/I')
+                p.connectButton.setText('Connecting…' if d.get('connecting') else ('Disconnect' if d['connected'] else 'Connect'))
+                p.connectButton.setEnabled(not d.get('connecting'))
+                p.triggerButton.setText('Read D/I')
                 p.manualGroup.setEnabled(d['connected'])
                 p.runSelectedButton.setEnabled(d['connected'])
                 p.triggerButton.setEnabled(d['connected'])
@@ -1279,8 +1220,6 @@ class Controller:
                 p.turnOnButton.setText('Turn Off' if all_on else 'Turn On')
                 for i in range(6):
                     n=i+1
-                    getattr(p,f'simulateDI{n}').setVisible(simulated)
-                    getattr(p,f'simulateDI{n}').setEnabled(d['connected'] and d.get('mode') != 'real' and bool(d['config'][i]['trigger']))
                     action = getattr(p,f'diAction{n}')
                     action.blockSignals(True)
                     action.setCurrentIndex(action.findData(d['config'][i].get('action','start')))
@@ -1304,7 +1243,7 @@ class Controller:
                 unit_jobs = [job for (uid,i),job in self.jobs.items() if uid == d['uid'] and job['config'].get('kind') != 'manual']
                 count=len(unit_jobs)
                 paused = bool(unit_jobs) and all(job.get('paused') for job in unit_jobs)
-                lampState = 'paused' if paused else ('running' if count else 'idle')
+                lampState = 'idle' if not d['connected'] else ('paused' if paused else ('running' if count else 'connected'))
                 if p.lampState != lampState:
                     p.lampState = lampState
                     p.lampLit = lampState == 'running'
@@ -1317,13 +1256,13 @@ class Controller:
                 p.runSelectedButton.setText(action)
                 p.stopButton.setText('RESET')
                 p.stopButton.setVisible(paused)
-                p.automationStatus.setText(f'{count} active relay job(s) · Simulation only' if count else 'Ready · Repeat is the number of pulses.')
+                p.automationStatus.setText(f'{count} active relay job(s)' if count else 'Ready · Repeat is the number of pulses.')
         automation_jobs = [job for job in self.jobs.values() if job['config'].get('kind') != 'manual']
         running=bool(automation_jobs)
         all_paused = running and all(job.get('paused') for job in automation_jobs)
         self.update_run_lamp(running, all_paused)
         self.home.runBothButton.setText('CONTINUE ALL' if all_paused else ('PAUSE ALL' if running else 'RUN ALL'))
-        self.resetBothButton.setVisible(bool(all_paused) and self.home.showAutomation.isChecked())
+        self.update_home_actions()
         if hasattr(self, 'combinedRunButton'):
             self.combinedRunButton.setText(self.home.runBothButton.text())
             self.combinedResetButton.setVisible(bool(all_paused))
@@ -1348,8 +1287,7 @@ class Controller:
         indices=[i for i in range(6) if getattr(p,f'{prefix}{i+1}').isChecked()]
         if not indices: self.log('Select relay checkboxes below the header action first.')
         for i in indices:
-            if momentary: self.pulse(d,i)
-            else: self.manual(d,i,value)
+            self.manual(d,i,value)
 
     def begin_run(self, callback):
         if self.countdownDialog is not None: return
@@ -1441,8 +1379,7 @@ class Controller:
             d['_clock_started'] += now - d.pop('_clock_paused')
         for i, job in paused:
             job['started'] += now - job.pop('paused')
-            saved_state = job.pop('relay_state')
-            if d.get('mode') != 'real': d['states'][i] = saved_state
+            job.pop('relay_state')
             remaining = job.pop('remaining_ms')
             pending = job.get('pending_write')
             if pending:
@@ -1467,11 +1404,34 @@ class Controller:
         self.cancel(d,i)
         self.set_output(d,i,value)
         if 'baseline' in d: d['baseline'][i] = bool(value)
-        self.log(f'{d["name"]} / {d["names"][i]} requested {"ON" if value else "OFF"} ({d.get("mode","simulation")})')
+        self.log(f'{d["name"]} / {d["names"][i]} requested {"ON" if value else "OFF"} ({d.get("mode","real")})')
         self.render()
 
-    def pulse(self,d,i):
-        if d['connected']: self.schedule(d,i,dict(first=0,pulse=self.default_pulse,repeat=1,between=0,kind='manual'))
+    def bind_momentary(self, button, d, indices):
+        button.setAutoRepeat(False)
+        button.setToolTip('Hold to turn ON; release to turn OFF.')
+        button.pressed.connect(lambda: self.start_momentary(button, d, indices()))
+        button.released.connect(lambda: self.release_momentary(button))
+        button.momentaryGuard = MomentaryGuard(self, button)
+
+    def start_momentary(self, button, d, indices):
+        if not d['connected'] or button in self.held_momentary: return
+        # A confirmation dialog would consume the release event. Hold controls
+        # are intentionally direct actions; normal toggle/automation prompts remain.
+        indices = tuple(indices)
+        if not indices: return
+        self.held_momentary[button] = (d, indices)
+        for i in indices: self.manual(d, i, True)
+
+    def release_momentary(self, button):
+        held = self.held_momentary.pop(button, None)
+        if held:
+            d, indices = held
+            for i in indices: self.manual(d, i, False)
+
+    def release_all_momentary(self):
+        for button in list(self.held_momentary): self.release_momentary(button)
+
 
     def hardware_error(self,d,error):
         self.cancel_countdown()
@@ -1508,10 +1468,6 @@ class Controller:
                 self.hardware.submit(d['uid'],lambda client=client:(client.bits(1),client.bits(2)),success,failure)
 
     def set_output(self,d,i,value,done=None,job=None):
-        if d.get('mode') != 'real':
-            d['states'][i] = bool(value)
-            if done: done()
-            return
         client = self.clients.get(d['uid'])
         if not d['connected'] or client is None:
             return
@@ -1538,15 +1494,34 @@ class Controller:
                 if job.get('paused'):
                     job['write_deferred'] = True
                     return None
-            try:
-                return client.write(i,bool(value))
-            except Exception:
-                client.failed = True
-                raise
+            return True
         def failure(error):
             if self.clients.get(d['uid']) is client:
                 self.hardware_error(d,error)
-        self.hardware.submit(d['uid'], operation, success, failure)
+        pending = self.pending_outputs.setdefault(d['uid'], [])
+        pending.append((client, i, bool(value), operation, success, failure))
+        if len(pending) == 1: QTimer.singleShot(0, self.flush_outputs)
+
+    def flush_outputs(self):
+        pending, self.pending_outputs = self.pending_outputs, {}
+        for uid, requests in pending.items():
+            def operation(requests=requests):
+                active = [r for r in requests if r[3]()]
+                if not active: return (None, [])
+                client = active[0][0]
+                try:
+                    states = client.write_many({r[1]: r[2] for r in active})
+                    return states, active
+                except Exception:
+                    client.failed = True
+                    raise
+            def success(result, requests=requests):
+                states, active = result
+                for request in requests:
+                    request[4](states if request in active else None)
+            def failure(error, requests=requests):
+                requests[0][5](error)
+            self.hardware.submit(uid, operation, success, failure)
 
     def request_job_output(self,d,i,job,value,acknowledged):
         """Retain a queued automation transition through PAUSE, until acknowledged."""
@@ -1611,17 +1586,8 @@ class Controller:
         if self.reset_input_active():
             self.log('Automation start blocked: global RESET input is active.')
             return
-        if triggered and d.get('mode') == 'real':
-            self.poll_inputs()
-            return
         if triggered:
-            inputs = [False] * 6
-            self.handle_input_sample(d, inputs)
-            for i,cfg in enumerate(d['config']):
-                if cfg['active'] and cfg['trigger']: inputs[i] = True
-            self.handle_input_sample(d, inputs)
-            self.handle_input_sample(d, [False]*6)
-            self.render()
+            self.poll_inputs()
             return
         if not any(uid == d['uid'] and job['config'].get('kind') != 'manual' for (uid,i),job in self.jobs.items()):
             d['baseline'] = list(d['states'])
@@ -1632,7 +1598,7 @@ class Controller:
             if cfg['active'] and (all_channels or bool(cfg['trigger'])==triggered) and cfg['repeat']>0:
                 self.schedule(d,i,cfg)
                 count+=1
-        self.log(f'{d["name"]}: {count} channels scheduled'+(' by simulated D/I. All selected inputs were asserted.' if triggered else '. Channels with a D/I trigger wait for Simulate D/I.'))
+        self.log(f'{d["name"]}: {count} channels scheduled'+(' after reading D/I.' if triggered else '. Channels with a D/I trigger wait for their input.'))
 
     def stop_device(self,d):
         self.cancel_countdown()
@@ -1669,6 +1635,22 @@ class Controller:
         for d in self.devices: self.run_selected(d)
         if not self.autoPulseTimer.isActive(): self.pendingPulseAll = False
 
+    def update_home_actions(self):
+        visible = self.window.screens.currentIndex() == 0 and self.home.showAutomation.isChecked()
+        jobs = [j for j in self.jobs.values() if j['config'].get('kind') != 'manual']
+        self.home.runBothButton.setVisible(visible)
+        self.allPulsesButton.setVisible(visible)
+        self.resetBothButton.setVisible(visible and bool(jobs) and all(j.get('paused') for j in jobs))
+        self.automationLegend.setVisible(visible)
+        for button in (self.allPulsesButton, self.resetBothButton):
+            policy = button.sizePolicy()
+            policy.setRetainSizeWhenHidden(visible)
+            button.setSizePolicy(policy)
+        self.homeToolbar.setFixedHeight(74 if visible else 40)
+        self.toolbarScroll.setFixedHeight(76 if visible else 42)
+        self.homeToolbar.layout().activate()
+        self.homeToolbar.setMinimumWidth(self.homeToolbar.layout().sizeHint().width())
+
     def toggle_automation(self,visible):
         self.maximizeTimer.stop()
         self.fitTimer.stop()
@@ -1700,6 +1682,8 @@ class Controller:
             # Reapply after Qt has processed the new layout/native constraints.
             self.maximizeTimer.start(100)
 
+        self.update_home_actions()
+
     def maximize_automation(self):
         if not isValid(self.window): return
         if self.home.showAutomation.isChecked():
@@ -1713,7 +1697,7 @@ class Controller:
         table=self.manage.deviceTable
         table.setRowCount(len(self.devices))
         for r,d in enumerate(self.devices):
-            for c,value in enumerate([d['name'],d['ip'],'6 relays',f'{"Real" if d.get("mode")=="real" else "Simulation"} · {"connected" if d["connected"] else "disconnected"}']):
+            for c,value in enumerate([d['name'],d['ip'],'6 relays','Connected' if d['connected'] else 'Disconnected']):
                 table.setItem(r,c,QTableWidgetItem(value))
                 table.item(r,c).setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         table.resizeColumnsToContents()
@@ -1793,8 +1777,7 @@ class Controller:
         self.connections.passwordInput.setText(d.get('password', ''))
         self.connections.passwordInput.setPlaceholderText('Default: moxa (if required)')
         self.passwordDefaultHint.setVisible(self.editing is None)
-        self.connections.modeInput.setCurrentIndex(1 if d.get('mode') == 'real' else 0)
-        self.connections.connectionMessage.setText('Select Simulation or Real E1214. Password login uses the MOXA MXIO SDK. Save, then Connect from the unit list.')
+        self.connections.connectionMessage.setText('Save the unit, then press Connect beside its IP on the Home page.')
         self.connections.saveConnectionButton.setEnabled(self.editing is not None or len(self.devices)<5)
 
     def connection_values(self):
@@ -1806,7 +1789,7 @@ class Controller:
         if self.connections.timeoutInput.value()<1: raise ValueError('Timeout must be greater than zero.')
         if any(d is not self.editing and (d['ip']==ip or d['name'].lower()==name.lower()) for d in self.devices):
             raise ValueError('Each unit must have a unique name and IP address.')
-        return dict(name=name,ip=ip,port=self.connections.portInput.value(),timeout=self.connections.timeoutInput.value(),password=self.connections.passwordInput.text(),mode='real' if self.connections.modeInput.currentIndex() else 'simulation')
+        return dict(name=name,ip=ip,port=self.connections.portInput.value(),timeout=self.connections.timeoutInput.value(),password=self.connections.passwordInput.text(),mode='real')
 
     def save_connection(self):
         try: values=self.connection_values()
@@ -1823,7 +1806,7 @@ class Controller:
             self.devices.append(d)
         else: self.stop_device(d)
         d.update(values)
-        d['connected'] = values['mode'] == 'simulation'
+        d['connected'] = False
         index=self.devices.index(d)
         self.rebuild()
         self.connections.unitSelector.setCurrentIndex(index)
@@ -1847,8 +1830,6 @@ class Controller:
                 lambda result: self.connections.connectionMessage.setText(f'Read-only test passed: {result["model"]}. No outputs changed.'),
                 lambda error: self.connections.connectionMessage.setText(f'Test failed: {error}'))
             return
-        self.connections.connectionMessage.setText('Simulated test passed. No network request was sent.')
-        self.log(f'Simulated connection test: {values["ip"]}:{values["port"]}.')
 
     def remove_device(self):
         row=self.manage.deviceTable.currentRow()
@@ -1865,10 +1846,19 @@ class Controller:
         self.rebuild()
         self.log(f'Removed {d["name"]}.')
 
-    def toggle_connection(self):
-        row=self.manage.deviceTable.currentRow()
-        if row<0: return
-        d=self.devices[row]
+    def toggle_connection(self, d=None):
+        if d is None:
+            row = self.manage.deviceTable.currentRow()
+            if row < 0: return
+            d = self.devices[row]
+        held = [button for button, (device, _) in self.held_momentary.items() if device is d]
+        if held:
+            for button in held: self.release_momentary(button)
+            self.flush_outputs()
+            self.hardware.submit(d['uid'], lambda: None,
+                lambda _: self.toggle_connection(d) if d['connected'] else None,
+                lambda error: self.hardware_error(d, error))
+            return
         if d.get('mode') == 'real':
             if d.get('connecting'): return
             if d['connected']:
@@ -1905,12 +1895,6 @@ class Controller:
                     if d in self.devices: self.hardware_error(d,error)
                 self.hardware.submit(d['uid'],client.connect,connected,failed)
             return
-        self.stop_device(d)
-        d['connected']=not d['connected']
-        self.refresh_table()
-        self.render()
-        self.log(f'{d["name"]}: simulated connection {d["connected"]}.')
-
     def apply_inline_settings(self):
         self.default_pulse = self.settings.defaultPulse.value()
         self.timestamps = self.settings.timestampsCheck.isChecked()
@@ -1932,7 +1916,7 @@ class Controller:
         text=self.home.promptInput.text().strip()
         if text:
             self.log('Prompt: '+text)
-            self.log(f'{len(self.devices)} simulated units; {sum(sum(d["states"]) for d in self.devices)} relays ON.' if text.lower()=='status' else 'Local demo: status | help. Ask Prompt checkbox enables action confirmation.')
+            self.log(f'{len(self.devices)} configured units; {sum(sum(d["states"]) for d in self.devices)} relays ON.' if text.lower()=='status' else 'Commands: status | help. Ask Prompt checkbox enables action confirmation.')
             self.home.promptInput.clear()
 
 
@@ -1961,3 +1945,4 @@ def main():
 
 if __name__=='__main__':
     raise SystemExit(main())
+

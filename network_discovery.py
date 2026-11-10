@@ -94,7 +94,7 @@ class DiscoveryDialog(QDialog):
         self.resize(790, 470)
         self.devices, self.results, self.worker = devices, {}, None
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel('Scan a local IPv4 range · read-only Modbus TCP identification'))
+        layout.addWidget(QLabel('Enter an IP address · scan its local 256-address range (read-only)'))
         row = QHBoxLayout()
         self.network = QComboBox()
         self.network.setEditable(True)
@@ -105,10 +105,10 @@ class DiscoveryDialog(QDialog):
                 try:
                     network = IPv4Network(f'{ip}/{entry.prefixLength()}', strict=False)
                     if not network.is_loopback:
-                        networks.add(str(network if network.prefixlen >= 24 else IPv4Network(f'{ip}/24', strict=False)))
+                        networks.add(ip)
                 except ValueError:
                     pass
-        self.network.addItems(sorted(networks) or ['169.254.10.0/24'])
+        self.network.addItems(sorted(networks) or ['169.254.10.1'])
         row.addWidget(self.network, 1)
         row.addWidget(QLabel('Port'))
         self.port = QSpinBox()
@@ -165,11 +165,12 @@ class DiscoveryDialog(QDialog):
 
     def start_scan(self):
         try:
-            network = IPv4Network(self.network.currentText().strip(), strict=False)
+            address = self.network.currentText().strip()
+            network = IPv4Network(address if '/' in address else address + '/24', strict=False)
             if network.num_addresses > 256 or network.is_multicast or network.is_unspecified:
                 raise ValueError()
         except ValueError:
-            self.status.setText('Enter an IPv4 range of /24 or smaller, for example 192.168.1.0/24.')
+            self.status.setText('Enter an IPv4 address, for example 192.168.1.10.')
             return
         self.table.setRowCount(0)
         self.results.clear()
@@ -210,3 +211,4 @@ class DiscoveryDialog(QDialog):
             self.cancel_scan()
             return
         super().reject()
+

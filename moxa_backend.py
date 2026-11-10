@@ -12,6 +12,17 @@ class ModbusError(Exception):
     pass
 
 
+def coil_groups(values):
+    """Only contiguous selected channels; never overwrite an unselected relay."""
+    if not values or any(type(i) is not int or not 0 <= i < 6 for i in values):
+        raise ModbusError('Invalid relay channels')
+    groups = []
+    for i in sorted(values):
+        if not groups or i != groups[-1][-1] + 1: groups.append([])
+        groups[-1].append(i)
+    return groups
+
+
 class E1214Client:
     def __init__(self, ip, port=502, timeout=2000, unit=1):
         self.ip, self.port, self.timeout, self.unit = ip, port, timeout / 1000, unit
@@ -75,6 +86,25 @@ class E1214Client:
             raise ModbusError('Relay readback differs from requested value')
         return states
 
+    def write_many(self, values):
+        groups = coil_groups(values)
+        for group in groups:
+            start, count = group[0], len(group)
+            if count == 1:
+                payload = struct.pack('>HH', start, 0xFF00 if values[start] else 0)
+                reply = self.request(5, payload)
+                expected = payload
+            else:
+                bits = sum(int(bool(values[i])) << n for n, i in enumerate(group))
+                expected = struct.pack('>HH', start, count)
+                reply = self.request(15, expected + bytes([1, bits]))
+            if reply != expected:
+                raise ModbusError('Relay write acknowledgement mismatch; output state is unknown')
+        states = self.bits(1)
+        if any(states[i] != bool(value) for i, value in values.items()):
+            raise ModbusError('Relay readback differs from requested value')
+        return states
+
 
 class HardwareQueue(QObject):
     delivered = Signal(object, object, object)
@@ -108,7 +138,7 @@ class HardwareQueue(QObject):
     def close(self):
         self.closed = True
         for executor in self.executors.values():
-            executor.shutdown(wait=False, cancel_futures=True)
+            executor.shutdown(wait=False, cancel_futures=False)
 
 
 class AuthenticatedE1214:
@@ -201,6 +231,19 @@ class AuthenticatedE1214:
                 raise ModbusError('Relay readback differs from requested state')
             return states
 
+    def write_many(self, values):
+        groups = coil_groups(values)
+        with self.lock:
+            if self.handle is None: raise ModbusError('Not connected')
+            for group in groups:
+                bits = sum(int(bool(values[i])) << n for n, i in enumerate(group))
+                data = (ctypes.c_uint8 * 1)(bits)
+                self.check(self.sdk().MXIO_WriteCoils(self.handle, group[0], len(group), data))
+            states = self.bits(1)
+            if any(states[i] != bool(value) for i, value in values.items()):
+                raise ModbusError('Relay readback differs from requested state')
+            return states
+
     def close(self):
         with self.lock:
             if self.handle is not None:
@@ -212,3 +255,4 @@ def make_client(values):
     if values.get('password'):
         return AuthenticatedE1214(values['ip'],values['port'],values['timeout'],values['password'])
     return E1214Client(values['ip'],values['port'],values['timeout'])
+
