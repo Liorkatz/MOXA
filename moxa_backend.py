@@ -110,19 +110,32 @@ class E1214Client:
         return states
 
     def write_many(self, values):
-        groups = coil_groups(values)
-        for group in groups:
-            start, count = group[0], len(group)
-            if count == 1:
-                payload = struct.pack('>HH', start, 0xFF00 if values[start] else 0)
-                reply = self.request(5, payload)
-                expected = payload
-            else:
-                bits = sum(int(bool(values[i])) << n for n, i in enumerate(group))
-                expected = struct.pack('>HH', start, count)
-                reply = self.request(15, expected + bytes([1, bits]))
-            if reply != expected:
-                raise ModbusError('Relay write acknowledgement mismatch; output state is unknown')
+        """One Modbus write for a batch, including non-adjacent selected relays.
+
+        FC15 accepts only a contiguous range, so gaps are filled from a fresh
+        coil read. Never assume an unselected relay is OFF or trust a stale UI
+        cache. Other Modbus masters must not control these relays concurrently:
+        a read-modify-write cannot be atomic against external writers.
+        """
+        coil_groups(values)  # Validate every requested relay before any I/O.
+        start, end = min(values), max(values)
+        if end - start + 1 != len(values):
+            current = self.bits(1)
+            batch = {i: bool(values[i]) if i in values else current[i]
+                     for i in range(start, end + 1)}
+        else:
+            batch = {i: bool(values[i]) for i in range(start, end + 1)}
+        count = end - start + 1
+        if count == 1:
+            payload = struct.pack('>HH', start, 0xFF00 if batch[start] else 0)
+            reply = self.request(5, payload)
+            expected = payload
+        else:
+            bits = sum(int(batch[i]) << (i - start) for i in range(start, end + 1))
+            expected = struct.pack('>HH', start, count)
+            reply = self.request(15, expected + bytes([1, bits]))
+        if reply != expected:
+            raise ModbusError('Relay write acknowledgement mismatch; output state is unknown')
         states = self.bits(1)
         if any(states[i] != bool(value) for i, value in values.items()):
             raise ModbusError('Relay readback differs from requested value')
@@ -255,13 +268,20 @@ class AuthenticatedE1214:
             return states
 
     def write_many(self, values):
-        groups = coil_groups(values)
+        """SDK equivalent of the single FC15 batch, with gap preservation."""
+        coil_groups(values)
+        start, end = min(values), max(values)
         with self.lock:
             if self.handle is None: raise ModbusError('Not connected')
-            for group in groups:
-                bits = sum(int(bool(values[i])) << n for n, i in enumerate(group))
-                data = (ctypes.c_uint8 * 1)(bits)
-                self.check(self.sdk().MXIO_WriteCoils(self.handle, group[0], len(group), data))
+            if end - start + 1 != len(values):
+                current = self.bits(1)
+                batch = {i: bool(values[i]) if i in values else current[i]
+                         for i in range(start, end + 1)}
+            else:
+                batch = {i: bool(values[i]) for i in range(start, end + 1)}
+            bits = sum(int(batch[i]) << (i - start) for i in range(start, end + 1))
+            data = (ctypes.c_uint8 * 1)(bits)
+            self.check(self.sdk().MXIO_WriteCoils(self.handle, start, end - start + 1, data))
             states = self.bits(1)
             if any(states[i] != bool(value) for i, value in values.items()):
                 raise ModbusError('Relay readback differs from requested state')
