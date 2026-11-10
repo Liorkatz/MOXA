@@ -27,7 +27,7 @@
    <item>
     <widget class="QLabel" name="connectionsHelp">
      <property name="text">
-      <string>Configure up to five ioLogik E1214 units. Changes are kept for this session.</string>
+      <string>Configure up to five ioLogik E1214 units. Settings are saved locally.</string>
      </property>
     </widget>
    </item>
@@ -120,7 +120,7 @@
      <item>
       <widget class="QPushButton" name="testConnectionButton">
        <property name="text">
-        <string>Test connection (simulated)</string>
+        <string>Test connection (read-only)</string>
        </property>
       </widget>
      </item>
@@ -129,7 +129,7 @@
    <item>
     <widget class="QLabel" name="connectionMessage">
      <property name="text">
-      <string>No physical device connection is made.</string>
+      <string>Use Connect on Home to control the physical unit.</string>
      </property>
     </widget>
    </item>
