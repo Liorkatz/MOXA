@@ -91,6 +91,38 @@ class TestClient:
         return list(self.states)
 
 
+# Two read requests use one TCP connection; close releases it.
+class FakeSocket:
+    def __init__(self):
+        self.pending = b''
+        self.closed = False
+
+    def settimeout(self, timeout):
+        pass
+
+    def sendall(self, packet):
+        transaction, protocol, length, unit = struct.unpack('>HHHB', packet[:7])
+        assert protocol == 0 and packet[7] == 1
+        response = bytes([1, 1, 0])
+        self.pending += struct.pack('>HHHB', transaction, 0, len(response) + 1, unit) + response
+
+    def recv(self, n):
+        result, self.pending = self.pending[:n], self.pending[n:]
+        return result
+
+    def close(self):
+        self.closed = True
+
+
+fake_socket = FakeSocket()
+with patch('moxa_backend.socket.create_connection', return_value=fake_socket) as connect:
+    persistent_client = E1214Client('127.0.0.1')
+    assert persistent_client.bits(1) == [False] * 6
+    assert persistent_client.bits(1) == [False] * 6
+    assert connect.call_count == 1
+    persistent_client.close()
+    assert fake_socket.closed
+
 app = QApplication([])
 app.setStyle('Fusion')
 app.setStyleSheet(main.STYLE)
@@ -122,6 +154,9 @@ with patch.object(main, 'make_client', return_value=test_client):
     wait_until(lambda: d['connected'])
 assert p.lampState == 'connected' and '#20c875' in p.runLamp.styleSheet()
 assert p.connectButton.text() == 'Disconnect'
+# Solid green stays visible without any automation jobs.
+c.render()
+assert p.lampState == 'connected' and '#20c875' in p.runLamp.styleSheet()
 assert test_client.writes == []  # Connecting must remain read-only.
 
 # ON occurs during the press, stays ON, and OFF follows release.
@@ -160,7 +195,6 @@ c.home.showAutomation.setChecked(True)
 app.processEvents()
 assert c.home.runBothButton.isVisible() and c.allPulsesButton.isVisible()
 c.window.screens.setCurrentIndex(1)
-c.render()
 assert c.home.runBothButton.isHidden() and c.allPulsesButton.isHidden() and c.resetBothButton.isHidden()
 c.window.screens.setCurrentIndex(0)
 assert c.home.runBothButton.isVisible() and c.allPulsesButton.isVisible()
