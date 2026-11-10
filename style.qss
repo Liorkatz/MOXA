@@ -2,7 +2,6 @@
 QWidget { font-family: "Segoe UI"; font-size: 10pt; color: #20314b; }
 QMainWindow, QDialog { background: #f3f6fa; }
 QLabel#brandLabel { font-size: 18pt; font-weight: 700; color: #14355c; padding: 2px; }
-QLabel#simulationLabel { color: #53708c; padding: 10px; }
 QLabel#homeTitle, QLabel#automationTitle, QLabel#manageTitle, QLabel#settingsTitle { font-size: 18pt; font-weight: 600; padding: 8px 0; }
 QTabWidget::pane { border: 1px solid #d8e1ec; background: white; border-radius: 6px; }
 QTabBar::tab { padding: 11px 26px; background: #e7edf4; }
