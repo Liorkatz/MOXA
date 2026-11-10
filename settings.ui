@@ -16,7 +16,7 @@
    <item>
     <widget class="QLabel" name="settingsNote">
      <property name="text">
-      <string>Simulation only · Settings apply for this session.</string>
+      <string>Settings are saved locally.</string>
      </property>
     </widget>
    </item>
