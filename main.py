@@ -21,6 +21,9 @@ from PySide6.QtWidgets import (QApplication, QAbstractItemView, QHeaderView,
                               QPushButton, QSizePolicy, QBoxLayout, QComboBox, QLineEdit, QTabBar, QFrame, QLabel, QTabWidget, QScrollArea, QCheckBox, QTableWidget, QLayout, QSpinBox)
 
 ROOT = Path(__file__).resolve().parent
+# Bundle nearly simultaneous automation transitions without delaying press/release.
+# The batch applies per hardware unit; it does not synchronize different units.
+AUTOMATION_BATCH_WINDOW_MS = 8
 DI_ACTION_HELP = {
     'start': 'Starts this channel\'s pulse sequence using its configured timings and repeat count.',
     'off': 'Cancels this channel\'s current action and turns its output OFF. Other channels are unchanged.',
@@ -1614,7 +1617,7 @@ class Controller:
         key = (d['uid'],i)
         version = self.output_versions.get(key,0) + 1
         self.output_versions[key] = version
-        def success(states):
+        def success(states, repaint=True):
             if self.output_versions.get(key) != version or self.clients.get(d['uid']) is not client: return
             if states is None:
                 # PAUSE can be released between the worker's pause check and
@@ -1625,7 +1628,7 @@ class Controller:
                 return
             d['states'] = states
             if done: done()
-            self.render()
+            if repaint: self.render()
         def operation():
             if getattr(client,'failed',False) or self.output_versions.get(key) != version or self.clients.get(d['uid']) is not client:
                 return None
@@ -1640,7 +1643,13 @@ class Controller:
                 self.hardware_error(d,error)
         pending = self.pending_outputs.setdefault(d['uid'], [])
         pending.append((client, i, bool(value), operation, success, failure))
-        if len(pending) == 1: QTimer.singleShot(0, self.flush_outputs)
+        if len(pending) == 1:
+            # Qt timers for different channels may arrive as separate events.
+            # A short fixed (non-debounced) window merges truly close automation
+            # transitions before their single per-unit FC15/MXIO batch.
+            # Manual and Momentary output remain immediate.
+            delay = AUTOMATION_BATCH_WINDOW_MS if job is not None else 0
+            QTimer.singleShot(delay, self.flush_outputs)
 
     def flush_outputs(self):
         pending, self.pending_outputs = self.pending_outputs, {}
@@ -1657,8 +1666,11 @@ class Controller:
                     raise
             def success(result, requests=requests):
                 states, active = result
+                # Acknowledge and arm every channel before one GUI repaint.
+                # Repainting between callbacks can skew equal timer deadlines.
                 for request in requests:
-                    request[4](states if request in active else None)
+                    request[4](states if request in active else None, repaint=False)
+                if active: self.render()
             def failure(error, requests=requests):
                 requests[0][5](error)
             self.hardware.submit(uid, operation, success, failure)
@@ -1717,9 +1729,10 @@ class Controller:
                 else:
                     job['phase']='on'
                     self.arm_job(d,i,job,cfg['between'])
-                self.render()
             self.request_job_output(d,i,job,False,off_done)
-        self.render()
+        # Real hardware repaints once per acknowledged batch. Avoid rendering
+        # between equal-time per-channel timers (causes unnecessary time skew).
+        if self.simulation_enabled: self.render()
 
     def run_selected(self,d,triggered=False,all_channels=False):
         if not d['connected']: return
