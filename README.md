@@ -16,7 +16,9 @@ File → Save, Save As and Open handle one JSON configuration containing unit co
 
 - Home: Connect/Disconnect beside each IP, manual outputs and collapsible unit cards. Show Automation displays timings, RUN/PAUSE/CONTINUE/RESET, per-channel DI actions and pulse previews. Global automation buttons appear only on Home.
 - Settings: scan/add/edit/remove units, confirmation preference, automatic pulse preview and optional configurable countdown before RUN. Enter a plain IPv4 address to scan its /24 range; the suffix is added internally.
-- Physical units require an explicit Connect on Home. Simulation mode and demo units have been removed. Legacy configurations load disconnected as real units; startup never sends output writes.
+- Physical units require an explicit Connect on Home. Offline simulation is opt-in from the **last setting** on the Settings page and disabled by default for old or new configuration files. No simulation-specific controls appear on Home while disabled (only the enabling checkbox is shown in Settings).
+- Enable simulation only after disconnecting all real units and stopping automation. Enabling swaps existing units to local simulated states and, when no real units have been configured, creates a temporary sample unit. Simulated DI buttons are exposed only in automation view. Disabling cancels local jobs, discards the sample, restores the saved real-state snapshot and requires explicit reconnection for real output control.
+- Simulation preference is saved in JSON; enabling persists across program restarts when explicitly selected. Simulated output values are not persisted over real hardware state. Legacy configurations load real units disconnected, and startup never sends hardware writes.
 - Direct Modbus/TCP connections are reused across requests while healthy, reducing setup overhead for simultaneous relay commands. No write is automatically repeated after ambiguous network errors. The SDK password-authenticated backend already maintains a connection.
 - Momentary: press to turn ON, hold to stay ON, release to turn OFF, individually or for selected channels. Release, hiding the control and window deactivation request OFF. Momentary is direct and does not open the optional confirmation dialog, which would consume the release event. Network communication and mechanical relay response still introduce latency.
 - Writes queued in the same GUI event-loop turn are batched per unit. Contiguous selected relays use one multiple-coil write; gaps are never overwritten. One readback validates all requested outputs. Six contiguous channels need two Modbus transactions instead of twelve. Writes are never retried after ambiguous failures.
@@ -31,6 +33,7 @@ The direct Modbus backend supports E1214 default mapping only. Password authenti
 ## Current folders
 
 - Root: application source, active `.ui` files, stylesheet, configuration and launcher.
+- The simulation option is entirely local and cannot control hardware while enabled; a connected physical unit blocks switching modes. Rebuild the Windows EXE after updating the source.
 - `assets/`: required interface icons.
 - `vendor/`: required MOXA DLL and provenance note.
 - `.venv/`: local installed Python environment, retained for this computer.
