@@ -13,7 +13,7 @@ class ModbusError(Exception):
 
 
 def coil_groups(values):
-    """Only contiguous selected channels; never overwrite an unselected relay."""
+    """Validate six relay indices; also return contiguous groups for diagnostics."""
     if not values or any(type(i) is not int or not 0 <= i < 6 for i in values):
         raise ModbusError('Invalid relay channels')
     groups = []
