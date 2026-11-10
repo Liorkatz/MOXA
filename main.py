@@ -11,7 +11,7 @@ from network_discovery import DiscoveryDialog
 from combined_timeline import CombinedTimeline
 from moxa_backend import E1214Client, HardwareQueue, make_client
 import config_store
-from PySide6.QtCore import QFile, QTimer, Qt, QObject, QEvent
+from PySide6.QtCore import QFile, QTimer, Qt, QObject, QEvent, QStandardPaths
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtGui import QIcon
 from shiboken6 import isValid
@@ -1941,7 +1941,16 @@ def main():
     app.setApplicationName('MOXA Control')
     app.setStyle('Fusion')
     app.setStyleSheet(STYLE)
-    controller=Controller(config_path=None if '--smoke-test' in sys.argv else ROOT / 'moxa_settings.json')
+    config_path = None
+    if '--smoke-test' not in sys.argv:
+        settings_dir = ROOT
+        if getattr(sys, 'frozen', False):
+            settings_dir = Path(QStandardPaths.writableLocation(
+                QStandardPaths.StandardLocation.AppLocalDataLocation
+            ))
+            settings_dir.mkdir(parents=True, exist_ok=True)
+        config_path = settings_dir / 'moxa_settings.json'
+    controller = Controller(config_path=config_path)
     app.aboutToQuit.connect(lambda: controller.save_configuration() if controller.config_path and not controller.closeHandled else None)
     app.aboutToQuit.connect(controller.hardware.close)
     controller.window.show()
