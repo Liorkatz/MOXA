@@ -27,6 +27,7 @@ class E1214Client:
     def __init__(self, ip, port=502, timeout=2000, unit=1):
         self.ip, self.port, self.timeout, self.unit = ip, port, timeout / 1000, unit
         self.transaction = 0
+        self._socket = None
 
     @staticmethod
     def receive(sock, size):
@@ -42,18 +43,36 @@ class E1214Client:
         self.transaction = (self.transaction + 1) % 65536
         pdu = bytes([function]) + payload
         packet = struct.pack('>HHHB', self.transaction, 0, len(pdu) + 1, self.unit) + pdu
-        with socket.create_connection((self.ip, self.port), self.timeout) as sock:
-            sock.settimeout(self.timeout)
+        try:
+            if self._socket is None:
+                self._socket = socket.create_connection((self.ip, self.port), self.timeout)
+                self._socket.settimeout(self.timeout)
+            sock = self._socket
             sock.sendall(packet)
             transaction, protocol, length, unit = struct.unpack('>HHHB', self.receive(sock, 7))
             if (transaction, protocol, unit) != (self.transaction, 0, self.unit) or not 2 <= length <= 254:
                 raise ModbusError('Invalid Modbus reply header')
             reply = self.receive(sock, length - 1)
-        if reply[0] == function | 0x80:
-            raise ModbusError(f'Modbus exception {reply[1] if len(reply)>1 else "?"}; check device configuration / IP access rules')
-        if reply[0] != function:
-            raise ModbusError('Unexpected Modbus function')
-        return reply[1:]
+            if not reply:
+                raise ModbusError('Empty Modbus reply')
+            if reply[0] == function | 0x80:
+                raise ModbusError(f'Modbus exception {reply[1] if len(reply)>1 else "?"}; check device configuration / IP access rules')
+            if reply[0] != function:
+                raise ModbusError('Unexpected Modbus function')
+            return reply[1:]
+        except Exception:
+            # A write may have reached the relay before a network failure.
+            # Never retry it implicitly. Disconnect and report an unknown state.
+            self.close()
+            raise
+
+    def close(self):
+        sock, self._socket = self._socket, None
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
 
     def bits(self, function, count=6):
         result = self.request(function, struct.pack('>HH', 0, count))
@@ -72,8 +91,12 @@ class E1214Client:
         return model
 
     def connect(self):
-        model = self.identify()
-        return dict(model=model, states=self.bits(1), inputs=self.bits(2))
+        try:
+            model = self.identify()
+            return dict(model=model, states=self.bits(1), inputs=self.bits(2))
+        except Exception:
+            self.close()
+            raise
 
     def write(self, channel, value):
         if not 0 <= channel < 6:
