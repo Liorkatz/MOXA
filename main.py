@@ -199,8 +199,6 @@ class Controller:
         self.window.mainLayout.setSpacing(2)
         self.window.mainLayout.setContentsMargins(6, 2, 6, 4)
         self.home = load_ui('home.ui')
-        self.home.promptInput.hide()
-        self.home.askPromptButton.hide()
         self.automationLegend = AutomationLegend(self.window)
         self.automationLegend.setFixedSize(414, 70)
         legendPolicy = self.automationLegend.sizePolicy()
@@ -310,8 +308,7 @@ class Controller:
         toolbar.insertWidget(2, self.home.showAutomation)
         toolbar.removeWidget(self.home.askConfirm)
         self.window.screens.tabBar().hide()
-        self.window.screens.currentChanged.connect(
-            lambda index: [button.setChecked(i == index) for i, button in enumerate(self.navigationButtons)])
+        self.window.screens.currentChanged.connect(self.on_page_changed)
         self.home.runBothButton.setFixedWidth(140)
         self.home.runBothButton.setProperty('compactManage', True)
         self.allPulsesButton = QPushButton('All pulses…', self.homeToolbar)
@@ -447,8 +444,6 @@ class Controller:
         self.home.showAutomation.toggled.connect(self.toggle_automation)
         self.home.devicesScroll.widget().layout().setSpacing(24)
         self.home.runBothButton.clicked.connect(self.run_both)
-        self.home.askPromptButton.clicked.connect(self.ask_prompt)
-        self.home.promptInput.returnPressed.connect(self.ask_prompt)
         self.manage.editDeviceButton.clicked.connect(self.edit_connection)
         self.manage.removeDeviceButton.clicked.connect(self.remove_device)
         self.manage.toggleDeviceButton.hide()
@@ -1179,9 +1174,13 @@ class Controller:
         if self.saveTimer is not None: self.saveTimer.start(400)
 
     def paint_run_lamp(self,p):
-        color = '#e4ad32' if p.lampState == 'paused' else ('#20c875' if p.lampLit or p.lampState == 'connected' else '#cbd4df')
+        # A confirmed connection is solid green; only active automation blinks.
+        colors = {'idle': '#cbd4df', 'connected': '#20c875', 'paused': '#e4ad32',
+                  'stale': '#e4ad32'}
+        color = ('#20c875' if p.lampLit else '#cbd4df') if p.lampState == 'running' else colors[p.lampState]
         p.runLamp.setStyleSheet(f'QFrame#runLamp {{ background: {color}; border: 1px solid #9aaabc; border-radius: 7px; }}')
-        text = {'idle':'Disconnected', 'connected':'Connected', 'running':'Connected · running', 'paused':'Connected · paused'}[p.lampState]
+        text = {'idle':'Disconnected', 'connected':'Connected', 'running':'Connected · running',
+                'paused':'Connected · paused', 'stale':'Connection response is stale'}[p.lampState]
         p.runLamp.setAccessibleName(f'Unit status: {text}')
         p.runLamp.setToolTip(f'Unit status: {text}')
 
@@ -1243,11 +1242,15 @@ class Controller:
                 unit_jobs = [job for (uid,i),job in self.jobs.items() if uid == d['uid'] and job['config'].get('kind') != 'manual']
                 count=len(unit_jobs)
                 paused = bool(unit_jobs) and all(job.get('paused') for job in unit_jobs)
-                lampState = 'idle' if not d['connected'] else ('paused' if paused else ('running' if count else 'connected'))
+                communication_state = self.communication_status(d)[0]
+                lampState = ('idle' if not d['connected'] else
+                             'stale' if communication_state != 'connected' else
+                             'paused' if paused else 'running' if count else 'connected')
                 if p.lampState != lampState:
                     p.lampState = lampState
                     p.lampLit = lampState == 'running'
-                    self.paint_run_lamp(p)
+                # Repaint on every render: reconnects show green without automation.
+                self.paint_run_lamp(p)
                 p.timeline.set_jobs(self.jobs)
                 action = 'CONTINUE' if paused else ('PAUSE' if count else 'RUN')
                 p.previewStop.setVisible(paused)
@@ -1635,6 +1638,12 @@ class Controller:
         for d in self.devices: self.run_selected(d)
         if not self.autoPulseTimer.isActive(): self.pendingPulseAll = False
 
+    def on_page_changed(self, index):
+        """Hide automation toolbar commands immediately when leaving Home."""
+        for i, button in enumerate(self.navigationButtons):
+            button.setChecked(i == index)
+        self.update_home_actions()
+
     def update_home_actions(self):
         visible = self.window.screens.currentIndex() == 0 and self.home.showAutomation.isChecked()
         jobs = [j for j in self.jobs.values() if j['config'].get('kind') != 'manual']
@@ -1911,13 +1920,6 @@ class Controller:
         self.timestamps=self.settings.timestampsCheck.isChecked()
         self.settings.accept()
         self.log('Application settings applied.')
-
-    def ask_prompt(self):
-        text=self.home.promptInput.text().strip()
-        if text:
-            self.log('Prompt: '+text)
-            self.log(f'{len(self.devices)} configured units; {sum(sum(d["states"]) for d in self.devices)} relays ON.' if text.lower()=='status' else 'Commands: status | help. Ask Prompt checkbox enables action confirmation.')
-            self.home.promptInput.clear()
 
 
 def main():
