@@ -105,6 +105,7 @@ def validate_configuration(data):
     countdown=data.get('countdown',{'enabled':False,'seconds':3})
     if not isinstance(countdown,dict): raise ValueError('Invalid countdown')
     return dict(version=1,devices=records,scenarios=saved_scenarios,default_mode='real',
+        simulation_enabled=boolean(data.get('simulation_enabled',False),'simulation enabled'),
         pulse=integer(data.get('pulse',0),0,3600000,'manual pulse'),
         timestamps=boolean(data.get('timestamps',True),'timestamps flag'),
         confirm_actions=boolean(data.get('confirm_actions',False),'confirmation flag'),
@@ -137,18 +138,21 @@ def protect(value, decrypt=False):
         kernel.LocalFree(ctypes.cast(target.data,ctypes.c_void_p))
 
 
-def save(path, devices, pulse, timestamps, scenarios=None, default_mode='real', reset_input=None, confirm_actions=False, auto_pulse_preview=False, countdown=None):
+def save(path, devices, pulse, timestamps, scenarios=None, default_mode='real', reset_input=None, confirm_actions=False, auto_pulse_preview=False, countdown=None, simulation_enabled=False):
     records = []
     for device in devices:
+        if device.get('temporary_sim_unit'):
+            continue  # The auto-generated sample is never saved as a real device.
         record = {key:device[key] for key in ('uid','name','ip','port','timeout','mode','names','config')}
+        record['mode'] = 'real'  # The simulator is a global mode, not a hardware unit type.
         record['password'] = device.get('password','')
-        record['continuous_states'] = list(device.get('baseline', device['states']))
+        record['continuous_states'] = list(device.get('physical_states', device.get('baseline', device['states'])))
         record['collapsed'] = bool(device.get('collapsed', False))
         record['manual_selection'] = device.get('manual_selection', {})
         records.append(record)
     path = Path(path)
     temporary = path.with_suffix('.tmp')
-    temporary.write_text(json.dumps(dict(version=1,devices=records,pulse=pulse,timestamps=timestamps,scenarios=scenarios or {},default_mode=default_mode,reset_input=reset_input or {'ip':'','channel':1},confirm_actions=bool(confirm_actions),auto_pulse_preview=bool(auto_pulse_preview),countdown=countdown or {'enabled':False,'seconds':3}),ensure_ascii=False,indent=2),encoding='utf-8')
+    temporary.write_text(json.dumps(dict(version=1,devices=records,pulse=pulse,timestamps=timestamps,scenarios=scenarios or {},default_mode=default_mode,reset_input=reset_input or {'ip':'','channel':1},simulation_enabled=bool(simulation_enabled),confirm_actions=bool(confirm_actions),auto_pulse_preview=bool(auto_pulse_preview),countdown=countdown or {'enabled':False,'seconds':3}),ensure_ascii=False,indent=2),encoding='utf-8')
     os.replace(temporary,path)
 
 
