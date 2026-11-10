@@ -1,0 +1,62 @@
+name: Build MOXA for Windows x64
+on:
+  push:
+    branches: [windows-exe]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+          architecture: x64
+      - run: python -m pip install -r requirements.txt pyinstaller
+      - run: python -m PyInstaller --noconfirm --clean MOXA.spec
+      - name: Verify bundled files
+        shell: pwsh
+        run: |
+          if (!(Test-Path dist/MOXA/MOXA.exe)) { throw 'Missing MOXA.exe' }
+          if (!(Test-Path dist/MOXA/_internal/vendor/MXIO.dll)) { throw 'Missing MXIO.dll' }
+          if (Get-ChildItem dist/MOXA -Recurse -Filter moxa_settings.json) {
+            throw 'Unexpected user settings in distribution'
+          }
+      - name: Verify EXE launches and saves settings
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path dist/MOXA/MOXA.exe).Path
+          $settings = Join-Path $env:LOCALAPPDATA 'MOXA Control/moxa_settings.json'
+          $smoke = Start-Process $exe -ArgumentList '--smoke-test' -PassThru
+          if (!$smoke.WaitForExit(30000)) {
+            $smoke.Kill()
+            throw 'EXE smoke test timed out'
+          }
+          if ($smoke.ExitCode -ne 0) { throw "Smoke test exit code: $($smoke.ExitCode)" }
+
+          $app = Start-Process $exe -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(30)
+            do {
+              Start-Sleep -Milliseconds 250
+              $app.Refresh()
+              if ($app.HasExited) { throw "MOXA exited early: $($app.ExitCode)" }
+            } until ($app.MainWindowHandle -ne 0 -or (Get-Date) -ge $deadline)
+            if (!$app.CloseMainWindow() -or !$app.WaitForExit(15000)) {
+              throw 'MOXA did not close normally'
+            }
+            if ($app.ExitCode -ne 0) { throw "MOXA exit code: $($app.ExitCode)" }
+            if (!(Test-Path $settings)) { throw "Settings not saved: $settings" }
+            $config = Get-Content -Raw $settings | ConvertFrom-Json
+            if ($config.version -ne 1) { throw 'Invalid saved settings' }
+          } finally {
+            if (!$app.HasExited) { $app.Kill() }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MOXA-Windows-x64
+          path: dist/
+          if-no-files-found: error
