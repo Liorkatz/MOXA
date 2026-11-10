@@ -46,7 +46,7 @@
      <item>
       <widget class="QLabel" name="connectionStatus">
        <property name="text">
-        <string>● Simulated connected</string>
+        <string>● Disconnected</string>
        </property>
       </widget>
      </item>
@@ -934,7 +934,7 @@ Trigger</string>
         <item row="7" column="3" colspan="3">
          <widget class="QPushButton" name="triggerButton">
           <property name="text">
-           <string>Simulate D/I</string>
+           <string>Read D/I</string>
           </property>
          </widget>
         </item>
