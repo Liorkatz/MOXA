@@ -46,7 +46,14 @@ assert [f for f, _ in peer.requests] == [15, 1]
 peer.requests.clear()
 client.write_many({0: False, 2: False, 3: False, 5: False})
 assert peer.states == [False, True, False, False, True, False]
-assert [f for f, _ in peer.requests] == [5, 15, 5, 1]
+# Sparse selected relays share one FC15; the gap comes from a live FC1 read.
+assert [f for f, _ in peer.requests] == [1, 15, 1]
+start, count, size, bits = struct.unpack('>HHBB', peer.requests[1][1])
+assert (start, count, size, bits) == (0, 6, 1, 0b010010)
+peer.requests.clear()
+client.write_many({2: True})
+assert [f for f, _ in peer.requests] == [5, 1]
+peer.requests.clear()
 for flag in ('bad_ack', 'bad_read'):
     setattr(peer, flag, True)
     try:
@@ -77,6 +84,7 @@ with patch.object(auth, 'sdk', return_value=sdk):
     assert sdk.writes == [(0, 6, 63)]
     auth.write_many({0: False, 2: False})
     assert sdk.states == [False, True, False, True, True, True]
+    assert sdk.writes[-1] == (0, 3, 0b010), 'One SDK write must keep skipped channel 1 ON'
 
 
 class TestClient:
@@ -208,8 +216,35 @@ assert not any(test_client.states)
 assert any(len(values) == 6 and all(values.values()) for values in test_client.writes)
 assert p.lampState == 'connected'
 
+# Same-time transitions for non-adjacent channels must share one batch.
+# Keep channel 2 ON before the run: inactive relays must be preserved.
+c.manual(d, 1, True)
+wait_until(lambda: test_client.states[1])
+for i, cfg in enumerate(d['config']):
+    cfg.update(active=i in (0, 2, 4), first=0, pulse=50, between=20, repeat=2, trigger=0)
+test_client.writes.clear()
+c.run_selected(d)
+wait_until(lambda: not c.jobs)
+assert test_client.states == [False, True, False, False, False, False]
+expected_on = {0: True, 2: True, 4: True}
+expected_off = {0: False, 2: False, 4: False}
+assert sum(values == expected_on for values in test_client.writes) == 2, test_client.writes
+assert sum(values == expected_off for values in test_client.writes) >= 2, test_client.writes
+
+# Different scheduled instants must not be merged merely because they share a unit.
+c.manual(d, 1, False)
+wait_until(lambda: not test_client.states[1])
+for i, cfg in enumerate(d['config']):
+    cfg.update(active=i in (0, 4), first=0 if i == 0 else 80,
+               pulse=30, between=0, repeat=1, trigger=0)
+test_client.writes.clear()
+c.run_selected(d)
+wait_until(lambda: not c.jobs)
+assert {0: True} in test_client.writes and {4: True} in test_client.writes, test_client.writes
+assert not any(values.get(0) and values.get(4) for values in test_client.writes)
+
 # Paused writes remain deferred; manual control cancels only its own channel.
-for cfg in d['config']: cfg.update(pulse=150, repeat=1)
+for cfg in d['config']: cfg.update(active=True, first=0, pulse=150, repeat=1)
 c.run_selected(d)
 c.pause_device(d)
 QTest.qWait(30)
@@ -257,4 +292,4 @@ c.hardware.close()
 deadline = time.monotonic() + 3
 while test_client.states[0] and time.monotonic() < deadline: time.sleep(.002)
 assert not test_client.states[0]
-print('PASS: live controls, press/hold/release, group batching, sparse coil writes, SDK packing, ACK/readback validation, paused automation, connection lamp, page visibility, legacy migration and plain-IP scanning.')
+print('PASS: live controls, press/hold/release, one FC15 for sparse relays, SDK preservation of gaps, same-time automation batching, separate-time transitions, ACK/readback validation, paused automation, connection lamp, page visibility, legacy migration and plain-IP scanning.')
