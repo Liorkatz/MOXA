@@ -37,7 +37,7 @@ The direct Modbus backend supports E1214 default mapping only. Password authenti
 - `assets/`: required interface icons.
 - `vendor/`: required MOXA DLL and provenance note.
 - `.venv/`: local installed Python environment, retained for this computer.
-- `tests/`: run `.venv64\Scripts\python.exe tests\verify_live_controls.py` for current live-control, automation and protocol checks. Tests use isolated peers; no physical relay operation is performed. Older scripts referencing simulation controls describe the retired interface and require adaptation before use.
+- `tests/`: run `.venv64\Scripts\python.exe tests\verify_live_controls.py` for current live-control, automation and protocol checks. Tests use isolated peers; no physical relay operation is performed. Run `tests/verify_simulation_opt_in.py` to check the disabled-by-default simulation setting, local DI/relay controls, saved preferences and protection against switching while hardware is connected.
 - `transfer/readable-code/`: legacy text-only transfer snapshot. Rebuild before using it for this version; direct source downloads and the EXE build use the current root files.
 
 ## Updating an existing installation
