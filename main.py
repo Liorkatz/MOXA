@@ -431,7 +431,7 @@ class Controller:
         self.simulationCheckbox.setObjectName('enableSimulation')
         self.simulationCheckbox.setChecked(False)
         self.simulationCheckbox.setToolTip('Test relays and DI-triggered automation locally; no physical relay commands are sent.')
-        self.simulationHelp = QLabel('Simulation is active. Relay and DI actions are local only; no hardware commands.', self.connections)
+        self.simulationHelp = QLabel('Simulation is active. Relay and DI actions are local only; no physical relay commands.', self.connections)
         self.simulationHelp.setWordWrap(True)
         self.simulationHelp.setVisible(False)
         self.connections.connectionsLayout.addWidget(self.simulationCheckbox, 0, Qt.AlignmentFlag.AlignLeft)
@@ -1112,7 +1112,7 @@ class Controller:
 
     def communication_status(self,d):
         if self.simulation_enabled:
-            return ('simulation', 'Simulation · offline', 'No hardware I/O')
+            return ('simulation', 'Simulation · offline', 'No hardware output commands')
         last = d.get('last_read','—')
         if d.get('connecting'): state,title='connecting','Connecting…'
         elif d.get('error'): state,title='error','Communication error'
