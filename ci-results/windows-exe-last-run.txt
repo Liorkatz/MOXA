@@ -1,6 +1,6 @@
-commit=67353222ac3e4520851f62a8f6dd46378af055c9
+commit=65beb3162cf83b7528eaa3fdc78752dfdd454f88
 runtime=Windows Python 3.12 x64
 dependencies=success
 syntax=success
-live_controls=failure
+live_controls=success
 simulation=success
