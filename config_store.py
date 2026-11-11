@@ -42,7 +42,7 @@ def channel_configuration(value):
         record['repeat']=integer(cfg.get('repeat'),0,1000,'repeat')
         record['trigger']=integer(cfg.get('trigger'),0,6,'trigger')
         if 'action' in cfg:
-            if cfg['action'] not in ('start','off','pause','continue','reset'): raise ValueError('Invalid DI action')
+            if cfg['action'] not in ('start','start_all','off','pause','continue','reset'): raise ValueError('Invalid DI action')
             record['action']=cfg['action']
         result.append(record)
     return result
