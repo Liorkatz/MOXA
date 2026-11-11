@@ -107,6 +107,14 @@ with tempfile.TemporaryDirectory() as folder:
         # A configuration explicitly saved with the opt-in enabled reopens offline.
         reopened = main.Controller(config_path=path)
         reopened.pollTimer.stop()
+        reopened.window.show()
+        QTest.qWait(150)
+        app.processEvents()
+        assert reopened.window.brandLabel.height() <= 50
+        assert reopened.home.devicesScroll.horizontalScrollBar().maximum() == 0, (
+            'Saved simulation reopening must not crop its virtual control card horizontally')
+        assert reopened.home.devicesScroll.verticalScrollBar().maximum() <= 10, (
+            'Saved simulation reopening must show all six output rows')
         assert reopened.simulation_enabled
         assert len(reopened.devices) == 1 and reopened.devices[0]['temporary_sim_unit']
         assert not reopened.clients
