@@ -47,9 +47,9 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path "ci-results" -Force | Out-Null
-          python tests/verify_live_controls.py *> "ci-results/live-controls.log"
+          python tests/verify_live_controls.py *> "ci-results/live-controls.txt"
           $result = $LASTEXITCODE
-          Get-Content "ci-results/live-controls.log"
+          Get-Content "ci-results/live-controls.txt"
           exit $result
       - name: Run opt-in simulator regression (offline)
         id: simulator
@@ -58,9 +58,9 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path "ci-results" -Force | Out-Null
-          python tests/verify_simulation_opt_in.py *> "ci-results/simulation.log"
+          python tests/verify_simulation_opt_in.py *> "ci-results/simulation.txt"
           $result = $LASTEXITCODE
-          Get-Content "ci-results/simulation.log"
+          Get-Content "ci-results/simulation.txt"
           exit $result
       - name: Publish concise result in repository
         if: always()
