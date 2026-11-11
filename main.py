@@ -697,12 +697,19 @@ class Controller:
                     self.window.showNormal()
                 self.window.setMinimumWidth(720)
                 self.window.resize(width, self.window.height())
-            self.window.setMinimumWidth(width)
+            # On a maximized window, imposing even a 900px minimum can
+            # resize Qt's maximized geometry (e.g. on smaller displays).
+            # Never change window size when navigating between pages.
+            if self.window.isMaximized() and not force_compact:
+                self.window.setMinimumWidth(min(width, self.window.width()))
+            else:
+                self.window.setMinimumWidth(width)
             self.window.setMinimumHeight(260)
             if not self.window.isMaximized():
                 self.fitTimer.start(35)
         else:
-            self.window.setMinimumWidth(950)
+            self.window.setMinimumWidth(
+                min(950, self.window.width()) if self.window.isMaximized() else 950)
             self.window.setMinimumHeight(260)
             self.fitTimer.stop()
         self._window_geometry_initialized = True
