@@ -167,8 +167,10 @@ def debug_layout(stage):
     print(report, flush=True)
     return bar - brand
 gap = debug_layout('initial compact home')
+assert c.window.brandLabel.height() <= 50, 'Brand area expands vertically above navigation'
 assert gap < 70, 'Large empty area above Home toolbar after launch'
 assert c.home.devicesScroll.horizontalScrollBar().maximum() == 0, 'Home card extends horizontally beyond viewport'
+assert c.home.devicesScroll.verticalScrollBar().maximum() <= 10, 'Six output rows are clipped on startup'
 assert not d['connected']
 assert not any('simulat' in b.text().lower() for b in c.window.findChildren(QPushButton))
 assert not c.manage.toggleDeviceButton.isVisible()
