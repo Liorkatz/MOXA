@@ -215,9 +215,10 @@ wait_until(lambda: not any(test_client.states))
 assert test_client.writes[-1] == {0: False, 1: False, 2: False}
 
 # Releasing before a queued ON starts must not produce a delayed ON.
+# Clear only previous writes, BEFORE issuing the press/release sequence.
+test_client.writes.clear()
 c.start_momentary(p.pulse1, d, [0])
 c.release_momentary(p.pulse1)
-test_client.writes.clear()
 wait_until(lambda: bool(test_client.writes))
 assert test_client.writes == [{0: False}]
 
