@@ -900,7 +900,7 @@ class Controller:
         for row in range(1, 7):
             for prefix in ('firstDelay', 'pulseTime', 'repeat', 'between'):
                 field = getattr(p, f'{prefix}{row}')
-                field.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                field.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 # Keep 1000 fully visible (including the spin-box arrows).
                 # Time values may exceed four digits, so do not lower max().
                 sample = '1000' if prefix == 'repeat' else '3600000'
@@ -909,8 +909,11 @@ class Controller:
             trigger.setProperty('compactDI', True)
             trigger.setFixedWidth(78)
             trigger.setFixedHeight(24)
-            for col in range(6):
-                p.automationGrid.itemAtPosition(row, col).setAlignment(Qt.AlignmentFlag.AlignCenter)
+            # Right-align every automation row control inside its grid cell.
+            for col in range(8):
+                item = p.automationGrid.itemAtPosition(row, col)
+                if item is not None:
+                    item.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         automationFields = QWidget(p.automationGroup)
         automationFields.setLayout(p.automationGrid)
         p.rowSeparators = []
