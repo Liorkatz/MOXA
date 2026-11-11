@@ -84,3 +84,29 @@ QLabel#connectionStatus[communicationState="connecting"], QLabel#connectionStatu
 QLabel#connectionStatus[communicationState="error"] { color: #bd3838; }
 QPushButton#modeButton { background: #e3effb; color: #1668b2; font-weight: 600; padding: 5px 10px; }
 QPushButton#modeButton[live="true"] { background: #fff0d9; color: #925706; border-color: #dba551; }
+
+/* Compact two-column Settings page: grouped controls, no tall blank sections. */
+QGroupBox#settingsUnitsGroup,
+QGroupBox#applicationSettingsGroup,
+QGroupBox#simulationSettingsGroup {
+    background: #ffffff;
+    border: 1px solid #cbd9ea;
+    border-radius: 7px;
+    margin-top: 15px;
+    padding: 12px 7px 7px;
+    font-size: 11pt;
+    font-weight: 600;
+}
+QGroupBox#settingsUnitsGroup::title,
+QGroupBox#applicationSettingsGroup::title,
+QGroupBox#simulationSettingsGroup::title {
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 5px;
+    color: #14355c;
+}
+QFrame#confirmationSection {
+    background: #ffffff;
+    border: 1px solid #cbd9ea;
+    border-radius: 7px;
+}
