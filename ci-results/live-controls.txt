@@ -1,6 +1,2 @@
-LAYOUT initial compact home: window=850x556, brand_bottom=63, toolbar_top=66, gap=3, viewport=818x390, panel=812x356 at (9,9), manual=294, hscroll=12, vscroll=0
-Traceback (most recent call last):
-  File "D:\a\MOXA\MOXA\tests\verify_live_controls.py", line 172, in <module>
-    assert c.home.devicesScroll.horizontalScrollBar().maximum() == 0, 'Home card extends horizontally beyond viewport'
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: Home card extends horizontally beyond viewport
+LAYOUT initial compact home: window=900x556, brand_bottom=63, toolbar_top=66, gap=3, viewport=868x404, panel=812x356 at (9,9), manual=294, hscroll=0, vscroll=0
+PASS: live controls, press/hold/release, one FC15 for sparse relays, SDK preservation of gaps, same-time automation batching, separate-time transitions, ACK/readback validation, paused automation, connection lamp, page visibility, legacy migration and plain-IP scanning.
