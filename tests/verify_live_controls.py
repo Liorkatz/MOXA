@@ -294,6 +294,35 @@ c.navigationButtons[0].trigger()
 assert c.window.screens.currentIndex() == 0
 QTest.qWait(90)
 assert c.window.width() == compact_width
+
+# User-expanded Home must remain maximized through Settings and LOG.
+c.window.showMaximized()
+QTest.qWait(80)
+assert c.window.isMaximized()
+for page_index in (1, 2, 0):
+    c.navigationButtons[page_index].trigger()
+    QTest.qWait(85)
+    assert c.window.screens.currentIndex() == page_index
+    assert c.window.isMaximized(), 'Page navigation must preserve user-selected maximized window'
+c.window.showNormal()
+QTest.qWait(70)
+assert not c.window.isMaximized()
+
+# Automation's expanded window is also retained when visiting Settings.
+# Explicitly turning automation OFF is the only operation that compacts it.
+c.home.showAutomation.setChecked(True)
+QTest.qWait(135)
+assert c.window.isMaximized()
+c.navigationButtons[1].trigger()
+QTest.qWait(80)
+assert c.window.isMaximized(), 'Settings must not unmaximize an expanded automation window'
+c.navigationButtons[0].trigger()
+QTest.qWait(80)
+assert c.window.isMaximized()
+c.home.showAutomation.setChecked(False)
+QTest.qWait(100)
+assert not c.window.isMaximized()
+assert c.window.width() == compact_width
 c.home.showAutomation.setChecked(True)
 app.processEvents()
 
