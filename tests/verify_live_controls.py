@@ -151,6 +151,24 @@ c.rebuild()
 c.window.show()
 app.processEvents()
 p = c.panels[0]
+QTest.qWait(125)
+def debug_layout(stage):
+    bar = c.toolbarScroll.mapTo(c.window, c.toolbarScroll.rect().topLeft()).y()
+    brand = c.window.brandLabel.mapTo(c.window, c.window.brandLabel.rect().bottomLeft()).y()
+    viewport = c.home.devicesScroll.viewport()
+    card = p.mapTo(viewport, p.rect().topLeft())
+    report = (f'LAYOUT {stage}: window={c.window.width()}x{c.window.height()}, '
+              f'brand_bottom={brand}, toolbar_top={bar}, gap={bar-brand}, '
+              f'viewport={viewport.width()}x{viewport.height()}, '
+              f'panel={p.width()}x{p.height()} at ({card.x()},{card.y()}), '
+              f'manual={p.manualGroup.height()}, '
+              f'hscroll={c.home.devicesScroll.horizontalScrollBar().maximum()}, '
+              f'vscroll={c.home.devicesScroll.verticalScrollBar().maximum()}')
+    print(report, flush=True)
+    return bar - brand
+gap = debug_layout('initial compact home')
+assert gap < 70, 'Large empty area above Home toolbar after launch'
+assert c.home.devicesScroll.horizontalScrollBar().maximum() == 0, 'Home card extends horizontally beyond viewport'
 assert not d['connected']
 assert not any('simulat' in b.text().lower() for b in c.window.findChildren(QPushButton))
 assert not c.manage.toggleDeviceButton.isVisible()
