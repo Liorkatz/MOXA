@@ -271,6 +271,29 @@ assert (d['uid'], 0) not in c.jobs and len(c.jobs) == 5
 wait_until(lambda: not c.jobs)
 assert not any(test_client.states)
 
+# A physical DI1 rising edge can start ALL six active channels, even when
+# another output uses DI3 or has no trigger. Ignore a repeat edge while running.
+for cfg in d['config']:
+    cfg.update(active=True, first=0, pulse=80, between=0,
+               repeat=1, trigger=0, action='start')
+d['config'][0].update(trigger=1, action='start_all')
+d['config'][1].update(trigger=1, action='start')
+d['config'][2].update(trigger=3, action='start')
+c.render()
+assert p.trigger3.findData(1) >= 0 and p.trigger3.findData(6) >= 0
+assert p.diAction1.currentData() == 'start_all'
+test_client.writes.clear()
+d['inputs'] = [False] * 6
+c.handle_input_sample(d, [True, False, False, False, False, False])
+assert len(c.jobs) == 6
+c.handle_input_sample(d, [False] * 6)
+c.handle_input_sample(d, [True, False, False, False, False, False])
+assert len(c.jobs) == 6, 'A second edge must not restart an active unit run'
+wait_until(lambda: not c.jobs)
+assert not any(test_client.states)
+assert any(len(values) == 6 and all(values.values())
+           for values in test_client.writes), test_client.writes
+
 with tempfile.TemporaryDirectory() as tmp:
     path = Path(tmp) / 'settings.json'
     old = dict(d, mode='simulation')
