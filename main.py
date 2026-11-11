@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parent
 AUTOMATION_BATCH_WINDOW_MS = 8
 DI_ACTION_HELP = {
     'start': 'Starts this channel\'s pulse sequence using its configured timings and repeat count.',
+    'start_all': 'Starts all active automation channels on this MOXA unit, including channels assigned to other DI inputs. A trigger while any unit automation is active is ignored.',
     'off': 'Cancels this channel\'s current action and turns its output OFF. Other channels are unchanged.',
     'pause': 'Pauses automation on all channels in this unit without changing output states.',
     'continue': 'Resumes paused automation in this unit from where it stopped. Does nothing if no automation is paused.',
@@ -879,10 +880,12 @@ class Controller:
             p.automationGrid.addWidget(button, i+1, 7)
         for i in range(6):
             action = QComboBox(p.automationGroup)
-            for title, value in [('START channel','start'), ('OFF channel','off'), ('PAUSE unit','pause'), ('CONTINUE unit','continue'), ('RESET all','reset')]:
+            for title, value in [('START channel','start'), ('START ALL (unit)','start_all'),
+                                 ('OFF channel','off'), ('PAUSE unit','pause'),
+                                 ('CONTINUE unit','continue'), ('RESET all','reset')]:
                 action.addItem(title, value)
                 action.setItemData(action.count()-1, DI_ACTION_HELP[value], Qt.ItemDataRole.ToolTipRole)
-            action.setFixedWidth(112)
+            action.setFixedWidth(145)
             action.setFixedHeight(26)
             action.setCurrentIndex(action.findData(d['config'][i].get('action', 'start')))
             action.setToolTip(DI_ACTION_HELP[action.currentData()])
@@ -898,11 +901,13 @@ class Controller:
             for prefix in ('firstDelay', 'pulseTime', 'repeat', 'between'):
                 field = getattr(p, f'{prefix}{row}')
                 field.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                sample = '10' if prefix == 'repeat' else '30000'
-                field.setFixedWidth(field.fontMetrics().horizontalAdvance(sample) + 34)
+                # Keep 1000 fully visible (including the spin-box arrows).
+                # Time values may exceed four digits, so do not lower max().
+                sample = '1000' if prefix == 'repeat' else '3600000'
+                field.setFixedWidth(max(88, field.fontMetrics().horizontalAdvance(sample) + 42))
             trigger = getattr(p, f'trigger{row}')
             trigger.setProperty('compactDI', True)
-            trigger.setFixedWidth(72)
+            trigger.setFixedWidth(78)
             trigger.setFixedHeight(24)
             for col in range(6):
                 p.automationGrid.itemAtPosition(row, col).setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -960,11 +965,13 @@ class Controller:
             trigger = getattr(p,f'trigger{n}')
             trigger.clear()
             trigger.addItem('None', 0)
-            trigger.addItem(f'DI {n}', n)
-            trigger.setMaxVisibleItems(2)
+            for di in range(1, 7):
+                trigger.addItem(f'DI {di}', di)
+            trigger.setToolTip('Choose any DI on this MOXA unit; START ALL in DI Action starts every active channel.')
+            trigger.setMaxVisibleItems(7)
             trigger.view().setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             trigger.view().setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            trigger.view().setMinimumHeight(60)
+            trigger.view().setMinimumHeight(7 * 26 + 4)
             for prefix in ('continuousSelect','momentarySelect'):
                 getattr(p,f'{prefix}{n}').toggled.connect(lambda _,d=d,p=p: self.manual_selection_changed(d,p))
             getattr(p,f'channelName{n}').editingFinished.connect(lambda d=d,p=p,i=i: self.rename(d,p,i))
@@ -973,7 +980,8 @@ class Controller:
             for prefix,key in [('active','active'),('firstDelay','first'),('pulseTime','pulse'),('repeat','repeat'),('between','between'),('trigger','trigger')]:
                 w=getattr(p,f'{prefix}{n}')
                 signal = w.toggled if prefix=='active' else w.currentIndexChanged if prefix=='trigger' else w.valueChanged
-                signal.connect(lambda value,d=d,i=i,key=key: self.change_config(d,i,key,(i+1 if value else 0) if key=='trigger' else value))
+                signal.connect(lambda value,d=d,i=i,key=key,w=w: self.change_config(
+                    d,i,key,w.currentData() if key=='trigger' else value))
 
     def collapse_unit(self,p,d):
         d['collapsed'] = not d.get('collapsed', False)
@@ -1099,23 +1107,38 @@ class Controller:
         # A held reset input prevents automation from restarting, including
         # triggers from other units arriving later in the polling cycle.
         if self.reset_input_active(): return
-        paused = any(uid == d['uid'] and job.get('paused') for (uid, ch), job in self.jobs.items())
-        for i, cfg in enumerate(d['config']):
-            trigger = i if cfg['trigger'] else -1
-            if cfg['active'] and 0 <= trigger < 6 and not previous[trigger] and inputs[trigger] and (cfg.get('action','start') != 'start' or (not paused and (d['uid'], i) not in self.jobs)):
-                action = cfg.get('action', 'start')
-                if action == 'reset':
-                    self.global_input_reset()
-                    return
-                if action == 'off': self.manual(d,i,False)
-                elif action == 'pause': self.pause_device(d)
-                elif action == 'continue':
-                    if any(uid == d['uid'] and job.get('paused') for (uid,ch),job in self.jobs.items()): self.continue_or_run(d)
-                elif action == 'start' and cfg['repeat'] > 0:
-                    if not any(uid == d['uid'] and job['config'].get('kind') != 'manual' for (uid,ch),job in self.jobs.items()):
-                        d['baseline'] = list(d['states'])
-                        d['_clock_started'] = monotonic()
-                    self.schedule(d,i,cfg)
+        # A DI can be assigned to multiple output channels. Capture all rising
+        # edges first, then apply an explicit unit-wide action at most once.
+        matching = [(i, cfg) for i, cfg in enumerate(d['config'])
+                    if cfg['active'] and 1 <= cfg.get('trigger', 0) <= 6
+                    and not previous[cfg['trigger'] - 1] and inputs[cfg['trigger'] - 1]]
+        if not matching: return
+        if any(cfg.get('action', 'start') == 'reset' for _, cfg in matching):
+            self.global_input_reset()
+            return
+        if any(cfg.get('action', 'start') == 'start_all' for _, cfg in matching):
+            if any(uid == d['uid'] and job['config'].get('kind') != 'manual'
+                   for (uid, _), job in self.jobs.items()):
+                self.log(f'{d["name"]}: DI START ALL ignored; automation already active.')
+            else:
+                self.run_selected(d, all_channels=True)
+            return
+        paused = any(uid == d['uid'] and job.get('paused')
+                     for (uid, _), job in self.jobs.items())
+        for i, cfg in matching:
+            action = cfg.get('action', 'start')
+            if action == 'off': self.manual(d, i, False)
+            elif action == 'pause': self.pause_device(d)
+            elif action == 'continue':
+                if any(uid == d['uid'] and job.get('paused')
+                       for (uid, _), job in self.jobs.items()):
+                    self.continue_or_run(d)
+            elif action == 'start' and cfg['repeat'] > 0 and not paused and (d['uid'], i) not in self.jobs:
+                if not any(uid == d['uid'] and job['config'].get('kind') != 'manual'
+                           for (uid, _), job in self.jobs.items()):
+                    d['baseline'] = list(d['states'])
+                    d['_clock_started'] = monotonic()
+                self.schedule(d, i, cfg)
 
     def communication_status(self,d):
         if self.simulation_enabled:
@@ -1193,7 +1216,7 @@ class Controller:
                 if device is None: raise ValueError(f'Unit {ip} is missing. Add it before loading this scenario.')
                 if ip in seen or len(record['names']) != 6 or len(record['config']) != 6: raise ValueError('Invalid scenario channels.')
                 for cfg in record['config']:
-                    if cfg.get('action','start') not in ('start','off','pause','continue','reset'): raise ValueError('Invalid DI action')
+                    if cfg.get('action','start') not in ('start','start_all','off','pause','continue','reset'): raise ValueError('Invalid DI action')
                     for key in ('first','pulse','between'):
                         if type(cfg[key]) is not int or not 0<=cfg[key]<=3600000: raise ValueError('Invalid scenario timing.')
                     if type(cfg['repeat']) is not int or not 0<=cfg['repeat']<=1000 or type(cfg['trigger']) is not int or not 0<=cfg['trigger']<=6 or type(cfg['active']) is not bool: raise ValueError('Invalid scenario automation.')
@@ -1343,7 +1366,8 @@ class Controller:
                     n=i+1
                     simulate_button = getattr(p, f'simulateDI{n}')
                     simulate_button.setVisible(self.simulation_enabled)
-                    simulate_button.setEnabled(self.simulation_enabled and d['connected'] and bool(d['config'][i]['trigger']))
+                    simulate_button.setEnabled(self.simulation_enabled and d['connected'] and any(
+                        cfg['active'] and cfg.get('trigger') == n for cfg in d['config']))
                     action = getattr(p,f'diAction{n}')
                     action.blockSignals(True)
                     action.setCurrentIndex(action.findData(d['config'][i].get('action','start')))
@@ -1361,7 +1385,7 @@ class Controller:
                         w.blockSignals(True)
                         value=d['config'][i][key]
                         if prefix=='active': w.setChecked(value)
-                        elif prefix=='trigger': w.setCurrentIndex(1 if value else 0)
+                        elif prefix=='trigger': w.setCurrentIndex(max(0, w.findData(value)))
                         else: w.setValue(value)
                         w.blockSignals(False)
                 unit_jobs = [job for (uid,i),job in self.jobs.items() if uid == d['uid'] and job['config'].get('kind') != 'manual']
