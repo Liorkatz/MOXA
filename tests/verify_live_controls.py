@@ -210,6 +210,13 @@ QTest.mouseRelease(p.pulse1, Qt.MouseButton.LeftButton)
 c.home.showAutomation.setChecked(True)
 app.processEvents()
 assert c.home.runBothButton.isVisible() and c.allPulsesButton.isVisible()
+toolbar = c.homeToolbar.layout()
+assert toolbar.indexOf(c.home.runBothButton) + 1 == toolbar.indexOf(c.allPulsesButton), (
+    'RUN ALL must be immediately next to All pulses on the right side'
+)
+assert toolbar.indexOf(c.home.runBothButton) > toolbar.indexOf(c.automationLegend), (
+    'RUN ALL must be after the centered legend, not next to LOG'
+)
 c.window.screens.setCurrentIndex(1)
 assert c.home.runBothButton.isHidden() and c.allPulsesButton.isHidden() and c.resetBothButton.isHidden()
 c.window.screens.setCurrentIndex(0)
