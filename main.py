@@ -311,6 +311,8 @@ class Controller:
             toolbar.insertWidget(index, button)
         toolbar.insertWidget(2, self.home.showAutomation)
         toolbar.removeWidget(self.home.askConfirm)
+        # Keep RUN ALL with the automation actions at the right, not by LOG.
+        toolbar.removeWidget(self.home.runBothButton)
         self.window.screens.tabBar().hide()
         self.window.screens.currentChanged.connect(self.on_page_changed)
         self.home.runBothButton.setFixedWidth(140)
@@ -334,9 +336,11 @@ class Controller:
         self.resetBothButton.clicked.connect(self.reset_all_devices)
         toolbar.addWidget(self.resetBothButton)
         self.home.runBothButton.setVisible(self.home.showAutomation.isChecked())
-        toolbar.insertStretch(5, 1)
-        toolbar.insertWidget(6, self.automationLegend)
-        toolbar.insertStretch(7, 1)
+        # Left: navigation. Center: legend. Right: contiguous action buttons.
+        toolbar.insertStretch(4, 1)
+        toolbar.insertWidget(5, self.automationLegend)
+        toolbar.insertStretch(6, 1)
+        toolbar.insertWidget(7, self.home.runBothButton)
         self.homeToolbar.setFixedHeight(40)
         self.homeToolbar.setMinimumWidth(toolbar.sizeHint().width())
         self.toolbarScroll = QScrollArea(self.window)
