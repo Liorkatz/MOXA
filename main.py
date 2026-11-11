@@ -658,12 +658,15 @@ class Controller:
         return True
 
     def compact_window_width(self):
-        """Shared Home/Settings width; only automation may use a wider window."""
-        card_width = max((max(p.minimumWidth(), p.minimumSizeHint().width(),
-                              p.deviceBar.sizeHint().width() + 24,
+        """Manual Home/Settings width, independent of automation panel constraints.
+
+        PanelLayoutAdapter increases panel.minimumWidth() for automation.
+        That value must never leak into Settings when changing pages.
+        """
+        card_width = max((max(800, p.deviceBar.sizeHint().width() + 24,
                               p.manualGroup.width() + 24) for p in self.panels),
-                         default=760)
-        return max(900, card_width + 120)
+                         default=800)
+        return max(900, card_width + 100)
 
     def update_window_width(self, force_compact=False):
         """Navigate without resizing. Only startup and automation OFF compact.
@@ -678,7 +681,14 @@ class Controller:
             self.homeToolbar.setMinimumWidth(0)
             self.homeToolbar.layout().invalidate()
             self.homeToolbar.layout().activate()
-            width = self.compact_window_width()
+            # When Settings is opened while automation remains enabled,
+            # preserve the width from the last manual Home, not the expanded
+            # (hidden) automation cards' minimumWidth.
+            width = (getattr(self, '_last_compact_width', 900)
+                     if page != 0 and self.home.showAutomation.isChecked()
+                     else self.compact_window_width())
+            if page == 0 and not self.home.showAutomation.isChecked():
+                self._last_compact_width = width
             first_layout = not getattr(self, '_window_geometry_initialized', False)
             if force_compact or first_layout:
                 # Apply the smaller width only at startup or on explicit
