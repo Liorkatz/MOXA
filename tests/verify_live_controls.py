@@ -281,6 +281,10 @@ assert c.window.minimumHeight() <= 300, 'Settings must not force a 650px minimum
 c.window.screens.setCurrentIndex(0)
 c.home.showAutomation.setChecked(False)
 QTest.qWait(85)
+print(f'CLOSED-AUTO geometry={c.window.width()}x{c.window.height()}, '
+      f'expected={compact_width}, minimum={c.window.minimumWidth()}, '
+      f'maximized={c.window.isMaximized()}, '
+      f'panelMin={p.minimumWidth()}, toolbarMin={c.homeToolbar.minimumWidth()}', flush=True)
 assert c.window.width() == compact_width, 'Closing automation must restore compact width'
 assert not c.window.isMaximized()
 assert c.window.minimumHeight() <= 300, 'Compact Home must not inherit the Settings minimum height'
