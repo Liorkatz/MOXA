@@ -167,6 +167,11 @@ def debug_layout(stage):
     print(report, flush=True)
     return bar - brand
 gap = debug_layout('initial compact home')
+compact_width = c.window.width()
+assert [a.text().replace('&', '') for a in c.window.menuBar().actions()][:4] == [
+    'File', 'Home', 'Settings', 'LOG'], 'File / page navigation must share the top menu row'
+assert all(a.isVisible() for a in c.navigationButtons)
+assert c.navigationButtons[0].isChecked()
 assert c.window.brandLabel.height() <= 50, 'Brand area expands vertically above navigation'
 assert gap < 70, 'Large empty area above Home toolbar after launch'
 assert c.home.devicesScroll.horizontalScrollBar().maximum() == 0, 'Home card extends horizontally beyond viewport'
@@ -252,6 +257,8 @@ assert toolbar.indexOf(c.home.runBothButton) > toolbar.indexOf(c.automationLegen
 )
 c.window.screens.setCurrentIndex(1)
 QTest.qWait(85)
+assert c.navigationButtons[1].isChecked() and not c.navigationButtons[0].isChecked()
+assert c.window.width() == compact_width, 'Settings must retain compact Home width'
 assert c.home.runBothButton.isHidden() and c.allPulsesButton.isHidden() and c.resetBothButton.isHidden()
 assert c.settingsColumns.count() == 2
 assert c.settingsUnitsGroup.isVisible() and c.settingsRightPane.isVisible()
@@ -264,11 +271,31 @@ assert c.window.minimumHeight() <= 300, 'Settings must not force a 650px minimum
 c.window.screens.setCurrentIndex(0)
 c.home.showAutomation.setChecked(False)
 QTest.qWait(85)
+assert c.window.width() == compact_width, 'Closing automation must restore compact width'
+assert not c.window.isMaximized()
 assert c.window.minimumHeight() <= 300, 'Compact Home must not inherit the Settings minimum height'
 assert c.window.height() <= max(320, c.window.screen().availableGeometry().height() - 40)
 c.home.showAutomation.setChecked(True)
 app.processEvents()
 assert c.home.runBothButton.isVisible() and c.allPulsesButton.isVisible()
+QTest.qWait(135)
+c.home.showAutomation.setChecked(False)
+QTest.qWait(100)
+assert not c.window.isMaximized(), 'Automation OFF must restore the normal window'
+assert c.window.width() == compact_width, 'Automation OFF must return to the same compact width'
+assert c.home.devicesScroll.horizontalScrollBar().maximum() == 0
+c.navigationButtons[1].trigger()
+QTest.qWait(90)
+assert c.window.screens.currentIndex() == 1
+assert c.window.width() == compact_width
+c.navigationButtons[2].trigger()
+assert c.window.screens.currentIndex() == 2, 'LOG must be available from the menu bar'
+c.navigationButtons[0].trigger()
+assert c.window.screens.currentIndex() == 0
+QTest.qWait(90)
+assert c.window.width() == compact_width
+c.home.showAutomation.setChecked(True)
+app.processEvents()
 
 # Automation still completes with batching and acknowledgement-based timing.
 for cfg in d['config']: cfg.update(active=True, first=0, pulse=40, between=10, repeat=2, trigger=0)
