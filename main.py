@@ -666,7 +666,9 @@ class Controller:
         card_width = max((max(800, p.deviceBar.sizeHint().width() + 24,
                               p.manualGroup.width() + 24) for p in self.panels),
                          default=800)
-        return max(900, card_width + 100)
+        # Reserve enough room for card padding/scroll bars without inflating
+        # Home by a few pixels when the connection-status text changes.
+        return max(900, card_width + 85)
 
     def update_window_width(self, force_compact=False):
         """Navigate without resizing. Only startup and automation OFF compact.
