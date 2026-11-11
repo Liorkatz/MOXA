@@ -1,4 +1,4 @@
-commit=d4532afba1de72a1f694239c12112a89965b28c4
+commit=dc58c967e5a53cacfa6473395238b54b13591ed3
 runtime=Windows Python 3.12 x64
 dependencies=success
 syntax=success
