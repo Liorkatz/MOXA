@@ -1,0 +1,1 @@
+PASS: live controls, press/hold/release, one FC15 for sparse relays, SDK preservation of gaps, same-time automation batching, separate-time transitions, ACK/readback validation, paused automation, connection lamp, page visibility, legacy migration and plain-IP scanning.

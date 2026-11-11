@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "D:\a\MOXA\MOXA\tests\verify_simulation_opt_in.py", line 137, in <module>
+    assert saved['devices'][0]['config'][0]['action'] == 'start_all'
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+KeyError: 'action'
