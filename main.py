@@ -665,28 +665,37 @@ class Controller:
                          default=760)
         return max(900, card_width + 120)
 
-    def update_window_width(self):
+    def update_window_width(self, force_compact=False):
+        """Navigate without resizing. Only startup and automation OFF compact.
+
+        In particular, visiting Settings/LOG must never unmaximize a window
+        that the operator deliberately expanded on Home.
+        """
         page = self.window.screens.currentIndex()
         self.home.showAutomation.setVisible(page == 0)
         automation_visible = page == 0 and self.home.showAutomation.isChecked()
         if not automation_visible:
-            # Release the old maximized/automation constraints *before* resizing.
-            # Settings uses exactly the same width as manual Home.
-            if self.window.isMaximized():
-                self.window.showNormal()
             self.homeToolbar.setMinimumWidth(0)
             self.homeToolbar.layout().invalidate()
             self.homeToolbar.layout().activate()
             width = self.compact_window_width()
-            self.window.setMinimumWidth(720)
-            self.window.setMinimumHeight(260)
-            self.window.resize(width, self.window.height())
+            first_layout = not getattr(self, '_window_geometry_initialized', False)
+            if force_compact or first_layout:
+                # Apply the smaller width only at startup or on explicit
+                # automation closure, not when navigating to another page.
+                if self.window.isMaximized():
+                    self.window.showNormal()
+                self.window.setMinimumWidth(720)
+                self.window.resize(width, self.window.height())
             self.window.setMinimumWidth(width)
-            self.fitTimer.start(35)
+            self.window.setMinimumHeight(260)
+            if not self.window.isMaximized():
+                self.fitTimer.start(35)
         else:
             self.window.setMinimumWidth(950)
-            self.fitTimer.stop()
             self.window.setMinimumHeight(260)
+            self.fitTimer.stop()
+        self._window_geometry_initialized = True
 
     def fit_window_height(self):
         if not isValid(self.window) or self.window.isMaximized(): return
@@ -1964,7 +1973,7 @@ class Controller:
         self.homeToolbar.layout().invalidate()
         self.homeToolbar.layout().activate()
         self.update_home_actions()
-        self.update_window_width()
+        self.update_window_width(force_compact=not visible)
         if visible:
             self.maximize_automation()
             # Reapply after Qt has processed the new layout/native constraints.
@@ -1975,7 +1984,7 @@ class Controller:
 
     def maximize_automation(self):
         if not isValid(self.window): return
-        if self.home.showAutomation.isChecked():
+        if self.window.screens.currentIndex() == 0 and self.home.showAutomation.isChecked():
             self.window.setMaximumWidth(16777215)
             self.window.layout().activate()
             # Let Windows maximize the complete decorated window. Applying the
