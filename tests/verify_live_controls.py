@@ -209,6 +209,18 @@ QTest.mouseRelease(p.pulse1, Qt.MouseButton.LeftButton)
 
 c.home.showAutomation.setChecked(True)
 app.processEvents()
+for row in range(1, 7):
+    for prefix in ('firstDelay', 'pulseTime', 'repeat', 'between'):
+        field = getattr(p, f'{prefix}{row}')
+        assert field.alignment() & Qt.AlignmentFlag.AlignRight, (
+            f'{prefix}{row} must display numeric content aligned to the right'
+        )
+    for col in range(8):
+        item = p.automationGrid.itemAtPosition(row, col)
+        if item is not None:
+            assert item.alignment() & Qt.AlignmentFlag.AlignRight, (
+                f'Automation grid row {row}, column {col} must align right'
+            )
 assert c.home.runBothButton.isVisible() and c.allPulsesButton.isVisible()
 toolbar = c.homeToolbar.layout()
 assert toolbar.indexOf(c.home.runBothButton) + 1 == toolbar.indexOf(c.allPulsesButton), (
