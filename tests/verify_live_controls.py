@@ -255,17 +255,20 @@ assert toolbar.indexOf(c.home.runBothButton) + 1 == toolbar.indexOf(c.allPulsesB
 assert toolbar.indexOf(c.home.runBothButton) > toolbar.indexOf(c.automationLegend), (
     'RUN ALL must be after the centered legend, not next to LOG'
 )
+# The automation page is maximized by design. Moving to Settings must
+# preserve this user-visible width rather than forcing compact geometry.
+QTest.qWait(135)
+expanded_width = c.window.width()
+expanded_maximized = c.window.isMaximized()
 c.window.screens.setCurrentIndex(1)
 QTest.qWait(85)
 assert c.navigationButtons[1].isChecked() and not c.navigationButtons[0].isChecked()
-print(f'SETTINGS width={c.window.width()}, compact={compact_width}, min={c.window.minimumWidth()}, '
-      f'leftSizeHint={c.settingsUnitsGroup.sizeHint().width()}, '
-      f'leftMin={c.settingsUnitsGroup.minimumSizeHint().width()}, '
-      f'rightSizeHint={c.settingsRightPane.sizeHint().width()}, '
-      f'rightMin={c.settingsRightPane.minimumSizeHint().width()}, '
-      f'connectionsMin={c.connections.minimumSizeHint().width()}, '
-      f'windowMinHint={c.window.minimumSizeHint().width()}', flush=True)
-assert c.window.width() == compact_width, 'Settings must retain compact Home width'
+print(f'SETTINGS width={c.window.width()}, expanded={expanded_width}, '
+      f'compact={compact_width}, minimum={c.window.minimumWidth()}', flush=True)
+assert c.window.width() == expanded_width, 'Settings must preserve width of expanded Home'
+assert c.window.isMaximized() == expanded_maximized, 'Settings must preserve maximized state'
+assert c.window.minimumWidth() <= compact_width + 60, (
+    'Settings must not inherit minimum width of hidden automation card')
 assert c.home.runBothButton.isHidden() and c.allPulsesButton.isHidden() and c.resetBothButton.isHidden()
 assert c.settingsColumns.count() == 2
 assert c.settingsUnitsGroup.isVisible() and c.settingsRightPane.isVisible()
