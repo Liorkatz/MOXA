@@ -18,7 +18,7 @@ from shiboken6 import isValid
 from PySide6.QtWidgets import (QApplication, QAbstractItemView, QHeaderView,
                               QTableWidgetItem, QMessageBox, QFileDialog,
                               QWidget, QHBoxLayout, QVBoxLayout, QDialog,
-                              QPushButton, QSizePolicy, QBoxLayout, QComboBox, QLineEdit, QTabBar, QFrame, QLabel, QTabWidget, QScrollArea, QCheckBox, QTableWidget, QLayout, QSpinBox)
+                              QPushButton, QSizePolicy, QBoxLayout, QComboBox, QLineEdit, QTabBar, QFrame, QLabel, QTabWidget, QScrollArea, QCheckBox, QTableWidget, QLayout, QSpinBox, QGroupBox)
 
 ROOT = Path(__file__).resolve().parent
 # Bundle nearly simultaneous automation transitions without delaying press/release.
@@ -315,6 +315,9 @@ class Controller:
         # Keep RUN ALL with the automation actions at the right, not by LOG.
         toolbar.removeWidget(self.home.runBothButton)
         self.window.screens.tabBar().hide()
+        # A hidden Settings page must not dictate Home's minimum height.
+        self.window.screens.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
+        self.window.screens.setMinimumHeight(0)
         self.window.screens.currentChanged.connect(self.on_page_changed)
         self.home.runBothButton.setFixedWidth(140)
         self.home.runBothButton.setProperty('compactManage', True)
@@ -366,6 +369,8 @@ class Controller:
             if page is self.connections:
                 self.connectionsScroll = QScrollArea()
                 self.connectionsScroll.setWidgetResizable(True)
+                self.connectionsScroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
+                self.connectionsScroll.setMinimumHeight(0)
                 self.connectionsScroll.setWidget(page)
                 getattr(self.window, name).layout().addWidget(self.connectionsScroll)
             else:
@@ -376,8 +381,8 @@ class Controller:
         self.timestamps = True
         self.connections.settingsButton.hide()
         self.settings.setParent(self.connections, Qt.WindowType.Widget)
-        self.settings.setMaximumWidth(600)
-        self.settings.setMinimumWidth(520)
+        self.settings.setMaximumWidth(500)
+        self.settings.setMinimumWidth(350)
         self.settings.settingsLayout.setContentsMargins(10, 8, 10, 8)
         self.settings.settingsLayout.setSpacing(6)
         self.settings.settingsLayout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
@@ -416,8 +421,8 @@ class Controller:
         self.autoPulseTimer.timeout.connect(self.open_automatic_pulses)
         confirmationSection = QFrame(self.connections)
         confirmationSection.setObjectName('confirmationSection')
-        confirmationSection.setMaximumWidth(600)
-        confirmationSection.setMinimumWidth(520)
+        confirmationSection.setMaximumWidth(500)
+        confirmationSection.setMinimumWidth(0)
         confirmationSection.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         confirmationLayout = QVBoxLayout(confirmationSection)
         confirmationLayout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
@@ -446,6 +451,62 @@ class Controller:
         self.connections.connectionsLayout.addWidget(self.simulationHelp, 0, Qt.AlignmentFlag.AlignLeft)
         self.simulationCheckbox.toggled.connect(self.set_simulation_enabled)
         self.settings.settingsNote.setText('Settings are saved locally.')
+        # Two compact Settings columns: unit management on the left, distinct
+        # application/confirmation/simulation sections on the right. The
+        # underlying widgets and their existing signals remain unchanged.
+        self.connections.connectionsHelp.setWordWrap(True)
+        self.connections.connectionsLayout.setSpacing(4)
+        for widget in (self.connections.manageContainer, self.settings,
+                       confirmationSection, self.simulationCheckbox, self.simulationHelp):
+            self.connections.connectionsLayout.removeWidget(widget)
+        self.manage.manageTitle.hide()  # The left group box provides this title.
+        self.settings.settingsTitle.hide()  # The right group box provides this title.
+
+        self.settingsUnitsGroup = QGroupBox('Configured units', self.connections)
+        self.settingsUnitsGroup.setObjectName('settingsUnitsGroup')
+        unitsLayout = QVBoxLayout(self.settingsUnitsGroup)
+        unitsLayout.setContentsMargins(8, 3, 8, 8)
+        unitsLayout.setSpacing(4)
+        unitsLayout.addWidget(self.connections.manageContainer)
+        self.settingsUnitsGroup.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+
+        self.applicationSettingsGroup = QGroupBox('Application settings', self.connections)
+        self.applicationSettingsGroup.setObjectName('applicationSettingsGroup')
+        applicationLayout = QVBoxLayout(self.applicationSettingsGroup)
+        applicationLayout.setContentsMargins(8, 2, 8, 8)
+        applicationLayout.addWidget(self.settings)
+        self.applicationSettingsGroup.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        confirmationSection.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        confirmationLayout.setContentsMargins(10, 5, 10, 7)
+
+        self.simulationSettingsGroup = QGroupBox('Simulation', self.connections)
+        self.simulationSettingsGroup.setObjectName('simulationSettingsGroup')
+        simulationLayout = QVBoxLayout(self.simulationSettingsGroup)
+        simulationLayout.setContentsMargins(10, 5, 10, 8)
+        simulationLayout.setSpacing(3)
+        simulationLayout.addWidget(self.simulationCheckbox)
+        simulationLayout.addWidget(self.simulationHelp)
+        self.simulationSettingsGroup.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+
+        self.settingsRightPane = QWidget(self.connections)
+        self.settingsRightPane.setObjectName('settingsRightPane')
+        rightLayout = QVBoxLayout(self.settingsRightPane)
+        rightLayout.setContentsMargins(0, 0, 0, 0)
+        rightLayout.setSpacing(8)
+        rightLayout.addWidget(self.applicationSettingsGroup)
+        rightLayout.addWidget(confirmationSection)
+        rightLayout.addWidget(self.simulationSettingsGroup)
+        rightLayout.addStretch(1)
+        self.settingsRightPane.setMinimumWidth(395)
+        self.settingsRightPane.setMaximumWidth(520)
+
+        self.settingsColumns = QHBoxLayout()
+        self.settingsColumns.setContentsMargins(0, 0, 0, 0)
+        self.settingsColumns.setSpacing(18)
+        self.settingsColumns.addWidget(self.settingsUnitsGroup, 5, Qt.AlignmentFlag.AlignTop)
+        self.settingsColumns.addWidget(self.settingsRightPane, 4, Qt.AlignmentFlag.AlignTop)
+        self.connections.connectionsLayout.addLayout(self.settingsColumns)
+        self.connections.connectionsLayout.addStretch(1)
         self.devices = []
         self.entries = []
         self.panels = []
@@ -483,9 +544,9 @@ class Controller:
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.verticalHeader().hide()
-        self.settings.setMinimumWidth(450)
-        self.window.resize(1280, 900)
-        self.window.setMinimumSize(950, 650)
+        self.settings.setMinimumWidth(350)
+        self.window.resize(1070, 620)
+        self.window.setMinimumSize(720, 260)
         if self.config_path:
             self.load_configuration()
             self.saveTimer = SettingsSaveTimer(self)
@@ -581,38 +642,53 @@ class Controller:
         return True
 
     def update_window_width(self):
-        managing = self.window.screens.currentIndex() == 1
+        page = self.window.screens.currentIndex()
+        managing = page == 1
         self.home.showAutomation.setVisible(not managing)
         self.navigationButtons[2].setVisible(not managing)
-        compact = self.window.screens.currentIndex() == 0 and not self.home.showAutomation.isChecked()
-        if compact:
-            card_width = max((max(p.deviceBar.sizeHint().width() + 24,
-                                  p.manualGroup.width() + 24) for p in self.panels), default=660)
-            width = max(720, card_width + 60, self.homeToolbar.layout().sizeHint().width() + 12)
-            # A fixed top-level width makes Windows disable maximization and
-            # can leave its native window state stale on the next toggle.
+        compact_home = page == 0 and not self.home.showAutomation.isChecked()
+        if compact_home or managing:
+            # Settings is wider but shallower than Home; the active page alone
+            # sets window geometry. Do not inherit the previous page's height.
             self.window.setMaximumWidth(16777215)
             if self.window.isMaximized():
                 self.window.showNormal()
+            if compact_home:
+                card_width = max((max(p.deviceBar.sizeHint().width() + 24,
+                                      p.manualGroup.width() + 24) for p in self.panels), default=660)
+                width = max(720, card_width + 60,
+                            self.homeToolbar.layout().sizeHint().width() + 12)
+            else:
+                width = max(1050, self.settingsUnitsGroup.sizeHint().width()
+                            + self.settingsRightPane.sizeHint().width() + 75)
+            self.window.setMinimumHeight(260)
             self.window.setMinimumWidth(width)
             self.window.resize(width, self.window.height())
-            self.fitTimer.start(30)
+            self.fitTimer.start(35)
         else:
             self.window.setMaximumWidth(16777215)
             self.window.setMinimumWidth(950)
             self.fitTimer.stop()
-            self.window.setMinimumHeight(min(650, self.window.screen().availableGeometry().height() - 40))
-            self.window.resize(max(950, self.window.width()), max(self.window.minimumHeight(), self.window.height()))
+            self.window.setMinimumHeight(260)
+            self.window.resize(max(950, self.window.width()), self.window.height())
 
     def fit_window_height(self):
-        if not isValid(self.window): return
-        if self.home.showAutomation.isChecked() or self.window.screens.currentIndex() != 0:
+        if not isValid(self.window) or self.window.isMaximized(): return
+        page = self.window.screens.currentIndex()
+        if page == 0 and not self.home.showAutomation.isChecked():
+            card_heights = [p.height() if getattr(p, 'collapsed', False)
+                            else p.sizeHint().height() for p in self.panels]
+            height = sum(card_heights) + max(0, len(card_heights) - 1) * 24 + 165
+            if not card_heights: height = 340
+        elif page == 1:
+            self.connections.connectionsLayout.activate()
+            height = self.connections.connectionsLayout.sizeHint().height() + 155
+        else:
             return
-        self.window.setMinimumHeight(240)
-        height = sum((p.height() if getattr(p, 'collapsed', False) else p.sizeHint().height())
-                     for p in self.panels)
-        height += max(0, len(self.panels) - 1) * 24 + 180
-        self.window.resize(self.window.width(), min(max(240, height), self.window.screen().availableGeometry().height() - 40))
+        available = self.window.screen().availableGeometry().height() - 40
+        target = min(max(320, height), max(320, available))
+        self.window.setMinimumHeight(260)
+        self.window.resize(self.window.width(), target)
 
     def new_device(self, number):
         return dict(uid=number, name=f'MOXA {number}', ip=f'169.254.10.{80+number}', port=502,
