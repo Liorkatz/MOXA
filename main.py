@@ -667,7 +667,7 @@ class Controller:
                                  default=760)
                 # A loaded device_panel.ui starts at 800px minimum width. The
                 # viewport also needs margins and its vertical scroll-bar room.
-                width = max(850, card_width + 85,
+                width = max(900, card_width + 120,
                             self.homeToolbar.layout().sizeHint().width() + 32)
             else:
                 width = max(1050, self.settingsUnitsGroup.sizeHint().width()
