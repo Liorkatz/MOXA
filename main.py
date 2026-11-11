@@ -201,6 +201,9 @@ class Controller:
         self.maximizeTimer.setSingleShot(True)
         self.maximizeTimer.timeout.connect(self.maximize_automation)
         self.window.brandLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # The brand header must not absorb vertical space when tab pages
+        # report a deliberately ignored height hint.
+        self.window.brandLabel.setFixedHeight(44)
         self.window.mainLayout.setSpacing(2)
         self.window.mainLayout.setContentsMargins(6, 2, 6, 4)
         self.home = load_ui('home.ui')
@@ -354,6 +357,10 @@ class Controller:
         self.toolbarScroll.setFixedHeight(42)
         self.toolbarScroll.setWidget(self.homeToolbar)
         self.window.mainLayout.insertWidget(1, self.toolbarScroll)
+        # Keep the title and toolbar fixed; give remaining height to the page.
+        self.window.mainLayout.setStretch(0, 0)
+        self.window.mainLayout.setStretch(1, 0)
+        self.window.mainLayout.setStretch(2, 1)
         self.saveStatus = QLabel('Automatic saving', self.window)
         self.saveStatus.setMinimumWidth(105)
         self.saveStatus.setToolTip('Settings are saved automatically after changes and when closing the application.')
@@ -654,10 +661,14 @@ class Controller:
             if self.window.isMaximized():
                 self.window.showNormal()
             if compact_home:
-                card_width = max((max(p.deviceBar.sizeHint().width() + 24,
-                                      p.manualGroup.width() + 24) for p in self.panels), default=660)
-                width = max(720, card_width + 60,
-                            self.homeToolbar.layout().sizeHint().width() + 12)
+                card_width = max((max(p.minimumWidth(), p.minimumSizeHint().width(),
+                                      p.deviceBar.sizeHint().width() + 24,
+                                      p.manualGroup.width() + 24) for p in self.panels),
+                                 default=760)
+                # A loaded device_panel.ui starts at 800px minimum width. The
+                # viewport also needs margins and its vertical scroll-bar room.
+                width = max(850, card_width + 85,
+                            self.homeToolbar.layout().sizeHint().width() + 32)
             else:
                 width = max(1050, self.settingsUnitsGroup.sizeHint().width()
                             + self.settingsRightPane.sizeHint().width() + 75)
@@ -677,8 +688,9 @@ class Controller:
         page = self.window.screens.currentIndex()
         if page == 0 and not self.home.showAutomation.isChecked():
             card_heights = [p.height() if getattr(p, 'collapsed', False)
-                            else p.sizeHint().height() for p in self.panels]
-            height = sum(card_heights) + max(0, len(card_heights) - 1) * 24 + 165
+                            else max(p.sizeHint().height(), p.minimumSizeHint().height())
+                            for p in self.panels]
+            height = sum(card_heights) + max(0, len(card_heights) - 1) * 24 + 200
             if not card_heights: height = 340
         elif page == 1:
             self.connections.connectionsLayout.activate()
