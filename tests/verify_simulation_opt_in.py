@@ -124,6 +124,10 @@ with tempfile.TemporaryDirectory() as folder:
 
         # A saved real-unit snapshot cannot be replaced by a simulated output.
         real = c.new_device(1)
+        # Persist explicit DI routing on a real unit; the temporary sample above
+        # must never be copied into the real configuration automatically.
+        real['config'][0].update(trigger=1, action='start_all')
+        real['config'][1]['trigger'] = 3
         real['states'] = [True, False, False, False, False, False]
         c.devices = [real]
         c.rebuild()
