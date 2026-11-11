@@ -68,6 +68,37 @@ with tempfile.TemporaryDirectory() as folder:
         QTest.mouseClick(p.simulateDI1, Qt.MouseButton.LeftButton)
         wait_until(app, lambda: not c.jobs)
         assert not any(d['states'])
+
+        # Every output row can be assigned to any DI, not just its own number.
+        p.trigger2.setCurrentIndex(p.trigger2.findData(3))
+        assert d['config'][1]['trigger'] == 3
+        assert p.trigger2.currentData() == 3
+        for i in range(6):
+            for prefix in ('firstDelay', 'pulseTime', 'repeat', 'between'):
+                field = getattr(p, f'{prefix}{i+1}')
+                assert field.width() >= field.fontMetrics().horizontalAdvance('1000') + 38
+        p.repeat1.setValue(1000)
+        assert '1000' in p.repeat1.text()
+        p.repeat1.setValue(1)
+
+        # DI1 -> START ALL starts all six active channels, even those whose
+        # own DI selection is None or DI3. A single edge schedules each once.
+        for cfg in d['config']:
+            cfg.update(active=True, first=0, pulse=50, between=0,
+                       repeat=1, trigger=0, action='start')
+        d['config'][0].update(trigger=1, action='start_all')
+        d['config'][1]['trigger'] = 3
+        c.render()
+        assert p.diAction1.currentData() == 'start_all'
+        assert p.trigger1.currentData() == 1
+        assert p.trigger2.currentData() == 3
+        assert p.simulateDI1.isEnabled()
+        assert p.simulateDI3.isEnabled()
+        with patch.object(c, 'schedule', wraps=c.schedule) as scheduled:
+            QTest.mouseClick(p.simulateDI1, Qt.MouseButton.LeftButton)
+            assert scheduled.call_count == 6, 'One DI1 edge must start all six active channels exactly once'
+        wait_until(app, lambda: not c.jobs)
+        assert not any(d['states'])
         c.save_configuration()
         saved = config_store.load(path)
         assert saved['simulation_enabled']
@@ -103,6 +134,8 @@ with tempfile.TemporaryDirectory() as folder:
         saved = config_store.load(path)
         assert saved['devices'][0]['mode'] == 'real'
         assert saved['devices'][0]['continuous_states'] == [True, False, False, False, False, False]
+        assert saved['devices'][0]['config'][0]['action'] == 'start_all'
+        assert saved['devices'][0]['config'][1]['trigger'] == 3
         c.simulationCheckbox.setChecked(False)
         assert real['states'] == [True, False, False, False, False, False]
         assert not real['connected']
