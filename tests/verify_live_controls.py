@@ -258,6 +258,13 @@ assert toolbar.indexOf(c.home.runBothButton) > toolbar.indexOf(c.automationLegen
 c.window.screens.setCurrentIndex(1)
 QTest.qWait(85)
 assert c.navigationButtons[1].isChecked() and not c.navigationButtons[0].isChecked()
+print(f'SETTINGS width={c.window.width()}, compact={compact_width}, min={c.window.minimumWidth()}, '
+      f'leftSizeHint={c.settingsUnitsGroup.sizeHint().width()}, '
+      f'leftMin={c.settingsUnitsGroup.minimumSizeHint().width()}, '
+      f'rightSizeHint={c.settingsRightPane.sizeHint().width()}, '
+      f'rightMin={c.settingsRightPane.minimumSizeHint().width()}, '
+      f'connectionsMin={c.connections.minimumSizeHint().width()}, '
+      f'windowMinHint={c.window.minimumSizeHint().width()}', flush=True)
 assert c.window.width() == compact_width, 'Settings must retain compact Home width'
 assert c.home.runBothButton.isHidden() and c.allPulsesButton.isHidden() and c.resetBothButton.isHidden()
 assert c.settingsColumns.count() == 2
