@@ -230,8 +230,23 @@ assert toolbar.indexOf(c.home.runBothButton) > toolbar.indexOf(c.automationLegen
     'RUN ALL must be after the centered legend, not next to LOG'
 )
 c.window.screens.setCurrentIndex(1)
+QTest.qWait(85)
 assert c.home.runBothButton.isHidden() and c.allPulsesButton.isHidden() and c.resetBothButton.isHidden()
+assert c.settingsColumns.count() == 2
+assert c.settingsUnitsGroup.isVisible() and c.settingsRightPane.isVisible()
+assert c.settingsUnitsGroup.mapTo(c.window, c.settingsUnitsGroup.rect().topLeft()).x() < (
+    c.settingsRightPane.mapTo(c.window, c.settingsRightPane.rect().topLeft()).x()
+), 'Unit management must be to the left of application settings'
+assert c.simulationCheckbox.parentWidget() is c.simulationSettingsGroup
+assert c.settings.parentWidget() is c.applicationSettingsGroup
+assert c.window.minimumHeight() <= 300, 'Settings must not force a 650px minimum height'
 c.window.screens.setCurrentIndex(0)
+c.home.showAutomation.setChecked(False)
+QTest.qWait(85)
+assert c.window.minimumHeight() <= 300, 'Compact Home must not inherit the Settings minimum height'
+assert c.window.height() <= max(320, c.window.screen().availableGeometry().height() - 40)
+c.home.showAutomation.setChecked(True)
+app.processEvents()
 assert c.home.runBothButton.isVisible() and c.allPulsesButton.isVisible()
 
 # Automation still completes with batching and acknowledgement-based timing.
