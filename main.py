@@ -296,6 +296,24 @@ class Controller:
         self.manage.manageActions.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.manage.manageActions.setSpacing(6)
         self.pages = [self.home, self.connections, self.logs]
+        # Primary page navigation belongs in the native menu bar beside File.
+        fileMenu = self.window.menuBar().addMenu('&File')
+        for title, shortcut, callback in [
+                ('&Open…', 'Ctrl+O', self.open_configuration_file),
+                ('&Save', 'Ctrl+S', self.save_file),
+                ('Save &As…', 'Ctrl+Shift+S', self.save_file_as)]:
+            action = fileMenu.addAction(title)
+            action.setShortcut(shortcut)
+            action.triggered.connect(callback)
+        self.navigationButtons = []
+        for index, title in enumerate(('Home', 'Settings', 'LOG')):
+            action = self.window.menuBar().addAction(title)
+            action.setCheckable(True)
+            action.setChecked(index == 0)
+            action.triggered.connect(
+                lambda checked=False, index=index:
+                    self.window.screens.setCurrentIndex(index))
+            self.navigationButtons.append(action)
         self.homeToolbar = QWidget()
         toolbar = QHBoxLayout(self.homeToolbar)
         toolbar.setContentsMargins(8, 0, 8, 0)
@@ -304,16 +322,7 @@ class Controller:
             toolbar.addWidget(self.home.toolbar.takeAt(0).widget())
         self.home.homeLayout.removeItem(self.home.toolbar)
         toolbar.removeWidget(self.home.showAutomation)
-        self.navigationButtons = []
-        for index, title in enumerate(('Home', 'Settings', 'LOG')):
-            button = QPushButton(title)
-            button.setObjectName('navigationButton')
-            button.setCheckable(True)
-            button.setChecked(index == 0)
-            button.clicked.connect(lambda checked=False, index=index: self.window.screens.setCurrentIndex(index))
-            self.navigationButtons.append(button)
-            toolbar.insertWidget(index, button)
-        toolbar.insertWidget(2, self.home.showAutomation)
+        toolbar.insertWidget(0, self.home.showAutomation)
         toolbar.removeWidget(self.home.askConfirm)
         # Keep RUN ALL with the automation actions at the right, not by LOG.
         toolbar.removeWidget(self.home.runBothButton)
@@ -343,11 +352,11 @@ class Controller:
         self.resetBothButton.clicked.connect(self.reset_all_devices)
         toolbar.addWidget(self.resetBothButton)
         self.home.runBothButton.setVisible(self.home.showAutomation.isChecked())
-        # Left: navigation. Center: legend. Right: contiguous action buttons.
-        toolbar.insertStretch(4, 1)
-        toolbar.insertWidget(5, self.automationLegend)
-        toolbar.insertStretch(6, 1)
-        toolbar.insertWidget(7, self.home.runBothButton)
+        # Left: automation switch. Centre: legend. Right: grouped actions.
+        toolbar.insertStretch(1, 1)
+        toolbar.insertWidget(2, self.automationLegend)
+        toolbar.insertStretch(3, 1)
+        toolbar.insertWidget(4, self.home.runBothButton)
         self.homeToolbar.setFixedHeight(40)
         self.homeToolbar.setMinimumWidth(toolbar.sizeHint().width())
         self.toolbarScroll = QScrollArea(self.window)
@@ -388,8 +397,8 @@ class Controller:
         self.timestamps = True
         self.connections.settingsButton.hide()
         self.settings.setParent(self.connections, Qt.WindowType.Widget)
-        self.settings.setMaximumWidth(500)
-        self.settings.setMinimumWidth(350)
+        self.settings.setMaximumWidth(385)
+        self.settings.setMinimumWidth(340)
         self.settings.settingsLayout.setContentsMargins(10, 8, 10, 8)
         self.settings.settingsLayout.setSpacing(6)
         self.settings.settingsLayout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
@@ -504,12 +513,17 @@ class Controller:
         rightLayout.addWidget(confirmationSection)
         rightLayout.addWidget(self.simulationSettingsGroup)
         rightLayout.addStretch(1)
-        self.settingsRightPane.setMinimumWidth(395)
-        self.settingsRightPane.setMaximumWidth(520)
+        self.settingsRightPane.setMinimumWidth(350)
+        self.settingsRightPane.setMaximumWidth(385)
 
         self.settingsColumns = QHBoxLayout()
         self.settingsColumns.setContentsMargins(0, 0, 0, 0)
-        self.settingsColumns.setSpacing(18)
+        self.settingsColumns.setSpacing(10)
+        self.settingsUnitsGroup.setMaximumWidth(465)
+        self.manage.manageHelp.setWordWrap(True)
+        self.manage.deviceHint.setWordWrap(True)
+        self.manage.manageHelp.setMaximumWidth(435)
+        self.manage.deviceHint.setMaximumWidth(435)
         self.settingsColumns.addWidget(self.settingsUnitsGroup, 5, Qt.AlignmentFlag.AlignTop)
         self.settingsColumns.addWidget(self.settingsRightPane, 4, Qt.AlignmentFlag.AlignTop)
         self.connections.connectionsLayout.addLayout(self.settingsColumns)
@@ -573,11 +587,6 @@ class Controller:
         self.window.screens.currentChanged.connect(lambda _: self.update_home_actions())
         self.update_window_width()
         self.saveCloseGuard = SaveOnClose(self)
-        fileMenu = self.window.menuBar().addMenu('&File')
-        for title, shortcut, callback in [('&Open…','Ctrl+O',self.open_configuration_file), ('&Save','Ctrl+S',self.save_file), ('Save &As…','Ctrl+Shift+S',self.save_file_as)]:
-            action = fileMenu.addAction(title)
-            action.setShortcut(shortcut)
-            action.triggered.connect(callback)
         self.update_file_title()
 
     def update_file_title(self):
@@ -648,40 +657,36 @@ class Controller:
         self.update_file_title()
         return True
 
+    def compact_window_width(self):
+        """Shared Home/Settings width; only automation may use a wider window."""
+        card_width = max((max(p.minimumWidth(), p.minimumSizeHint().width(),
+                              p.deviceBar.sizeHint().width() + 24,
+                              p.manualGroup.width() + 24) for p in self.panels),
+                         default=760)
+        return max(900, card_width + 120)
+
     def update_window_width(self):
         page = self.window.screens.currentIndex()
-        managing = page == 1
-        self.home.showAutomation.setVisible(not managing)
-        self.navigationButtons[2].setVisible(not managing)
-        compact_home = page == 0 and not self.home.showAutomation.isChecked()
-        if compact_home or managing:
-            # Settings is wider but shallower than Home; the active page alone
-            # sets window geometry. Do not inherit the previous page's height.
-            self.window.setMaximumWidth(16777215)
+        self.home.showAutomation.setVisible(page == 0)
+        automation_visible = page == 0 and self.home.showAutomation.isChecked()
+        if not automation_visible:
+            # Release the old maximized/automation constraints *before* resizing.
+            # Settings uses exactly the same width as manual Home.
             if self.window.isMaximized():
                 self.window.showNormal()
-            if compact_home:
-                card_width = max((max(p.minimumWidth(), p.minimumSizeHint().width(),
-                                      p.deviceBar.sizeHint().width() + 24,
-                                      p.manualGroup.width() + 24) for p in self.panels),
-                                 default=760)
-                # A loaded device_panel.ui starts at 800px minimum width. The
-                # viewport also needs margins and its vertical scroll-bar room.
-                width = max(900, card_width + 120,
-                            self.homeToolbar.layout().sizeHint().width() + 32)
-            else:
-                width = max(1050, self.settingsUnitsGroup.sizeHint().width()
-                            + self.settingsRightPane.sizeHint().width() + 75)
+            self.homeToolbar.setMinimumWidth(0)
+            self.homeToolbar.layout().invalidate()
+            self.homeToolbar.layout().activate()
+            width = self.compact_window_width()
+            self.window.setMinimumWidth(720)
             self.window.setMinimumHeight(260)
-            self.window.setMinimumWidth(width)
             self.window.resize(width, self.window.height())
+            self.window.setMinimumWidth(width)
             self.fitTimer.start(35)
         else:
-            self.window.setMaximumWidth(16777215)
             self.window.setMinimumWidth(950)
             self.fitTimer.stop()
             self.window.setMinimumHeight(260)
-            self.window.resize(max(950, self.window.width()), self.window.height())
 
     def fit_window_height(self):
         if not isValid(self.window) or self.window.isMaximized(): return
@@ -1926,28 +1931,28 @@ class Controller:
             button.setSizePolicy(policy)
         self.homeToolbar.setFixedHeight(74 if visible else 40)
         self.toolbarScroll.setFixedHeight(76 if visible else 42)
+        self.homeToolbar.setMinimumWidth(0)
+        self.homeToolbar.layout().invalidate()
         self.homeToolbar.layout().activate()
-        self.homeToolbar.setMinimumWidth(self.homeToolbar.layout().sizeHint().width())
+        if visible:
+            self.homeToolbar.setMinimumWidth(self.homeToolbar.layout().sizeHint().width())
 
     def toggle_automation(self,visible):
         self.maximizeTimer.stop()
         self.fitTimer.stop()
-        # Reserve action slots only in automation mode, keeping the legend
-        # stationary during PAUSE without widening the manual-only window.
+        # Apply panel and toolbar visibility *before* computing compact width.
+        # Otherwise old automation minimum widths prevent returning to Home.
         for button in (self.allPulsesButton, self.resetBothButton):
             policy = button.sizePolicy()
             policy.setRetainSizeWhenHidden(visible)
             button.setSizePolicy(policy)
-        self.allPulsesButton.setVisible(visible)
-        self.window.setMaximumWidth(16777215)
         self.home.runBothButton.setVisible(visible)
-        automation_jobs = [job for job in self.jobs.values() if job['config'].get('kind') != 'manual']
-        self.resetBothButton.setVisible(visible and bool(automation_jobs) and all(job.get('paused') for job in automation_jobs))
+        self.allPulsesButton.setVisible(visible)
+        jobs = [job for job in self.jobs.values() if job['config'].get('kind') != 'manual']
+        self.resetBothButton.setVisible(visible and bool(jobs) and all(job.get('paused') for job in jobs))
         self.automationLegend.setVisible(visible and self.window.screens.currentIndex() == 0)
         self.homeToolbar.setFixedHeight(74 if visible else 40)
         self.toolbarScroll.setFixedHeight(76 if visible else 42)
-        self.homeToolbar.setMinimumWidth(self.homeToolbar.layout().sizeHint().width())
-        self.update_window_width()
         for p in self.panels:
             p.setMaximumWidth(16777215)
             p.automationGroup.setVisible(visible)
@@ -1955,12 +1960,18 @@ class Controller:
             p.setMinimumWidth(p.manualGroup.width() + p.automationGroup.width() + 40 if visible else 760)
         for p,d in zip(self.panels,self.devices):
             self.apply_collapse(p,d)
+        self.homeToolbar.setMinimumWidth(0)
+        self.homeToolbar.layout().invalidate()
+        self.homeToolbar.layout().activate()
+        self.update_home_actions()
+        self.update_window_width()
         if visible:
             self.maximize_automation()
             # Reapply after Qt has processed the new layout/native constraints.
             self.maximizeTimer.start(100)
-
-        self.update_home_actions()
+        else:
+            # One more geometry pass after Qt updates hidden panel size hints.
+            self.fitTimer.start(60)
 
     def maximize_automation(self):
         if not isValid(self.window): return
